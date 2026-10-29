@@ -6,7 +6,7 @@ export LC_ALL=C
 fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 if [[ "${1:-}" == --help ]]; then
     printf '%s\n' 'Usage: ASCEND_IMAGE=... IDENTITY_DIR=/absolute/path bash prepare-user.sh' \
-        'Optional: LOCAL_UID / LOCAL_GID (default: id -u / id -g), LOCAL_USER.'
+        'Optional: LOCAL_UID / LOCAL_GID (default: id -u / id -g), LOCAL_USER (default: developer).'
     exit 0
 fi
 [[ $# -eq 0 ]] || fail 'No positional arguments are accepted; see --help.'
@@ -14,6 +14,7 @@ image=${ASCEND_IMAGE:?set ASCEND_IMAGE to the generated image reference}
 identity_dir=${IDENTITY_DIR:?set IDENTITY_DIR to an absolute directory}
 local_uid=${LOCAL_UID:-$(id -u)}
 local_gid=${LOCAL_GID:-$(id -g)}
+username=${LOCAL_USER:-developer}
 [[ "$local_uid" =~ ^[0-9]{1,10}$ && "$local_gid" =~ ^[0-9]{1,10}$ ]] || fail 'LOCAL_UID and LOCAL_GID must be numeric IDs.'
 local_uid=$((10#$local_uid)); local_gid=$((10#$local_gid))
 ((local_uid > 0 && local_uid <= 2147483647 && local_gid <= 2147483647)) || fail 'Use a non-root UID and a valid GID (0..2147483647).'
@@ -42,8 +43,6 @@ docker cp "$container:/etc/group" "$temp_dir/base-group"
 docker rm "$container" >/dev/null
 container=
 
-existing_user=$(awk -F: -v uid="$local_uid" '$3 == uid { print $1; exit }' "$temp_dir/base-passwd")
-username=${LOCAL_USER:-${existing_user:-ascend-$local_uid}}
 [[ "$username" =~ ^[A-Za-z_][A-Za-z0-9_.-]{0,31}$ && "$username" != root ]] || fail 'LOCAL_USER must be a non-root Unix username (up to 32 characters).'
 conflict=$(awk -F: -v name="$username" -v uid="$local_uid" '$1 == name && $3 != uid { print $1; exit }' "$temp_dir/base-passwd")
 [[ -z "$conflict" ]] || fail "Username $username already belongs to another UID; choose another LOCAL_USER."
@@ -61,8 +60,9 @@ if [[ -z "$group_name" ]]; then
     printf '%s:*:%s:%s\n' "$group_name" "$local_gid" "$username" >> "$temp_dir/group"
 fi
 printf 'image_id=%s\nuid=%s\ngid=%s\nuser=%s\n' "$image_id" "$local_uid" "$local_gid" "$username" > "$temp_dir/identity.txt"
-chmod 644 "$temp_dir/passwd" "$temp_dir/group" "$temp_dir/identity.txt"
+printf 'LOCAL_UID=%s\nLOCAL_GID=%s\nLOCAL_USER=%s\n' "$local_uid" "$local_gid" "$username" > "$temp_dir/compose.env"
+chmod 644 "$temp_dir/passwd" "$temp_dir/group" "$temp_dir/identity.txt" "$temp_dir/compose.env"
 # Publish only after both databases are ready. Recreate running containers after
 # regenerating these files, since existing file bind mounts retain their inode.
-mv "$temp_dir/passwd" "$temp_dir/group" "$temp_dir/identity.txt" "$identity_dir/"
+mv "$temp_dir/passwd" "$temp_dir/group" "$temp_dir/identity.txt" "$temp_dir/compose.env" "$identity_dir/"
 printf 'Prepared %s (%s:%s), group %s\nIdentity files: %s\n' "$username" "$local_uid" "$local_gid" "$group_name" "$identity_dir"

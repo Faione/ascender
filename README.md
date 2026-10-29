@@ -119,6 +119,8 @@ ascend-sim:sim-cann9.1.0-950-torch2.10.0_cpu-npu2.10.0.post4-py310-amd64-<HASH12
 
 使用 `examples/compose.yaml` 挂载代码与可写 HOME，通过宿主机 UID/GID 控制产物属主。启动前用 `examples/prepare-user.sh` 从目标镜像生成带对应用户的 passwd/group 副本，由 Compose 只读挂载，避免 `I have no name!` 和用户查询失败。NPU 叠加 `examples/compose.npu.yaml` 的设备、组和只读驱动挂载。
 
+准备脚本在未配置 `LOCAL_UID` / `LOCAL_GID` 时自动获取当前 UID/GID，`LOCAL_USER` 默认 `developer`；显式值优先。生成的 `IDENTITY_DIR/compose.env` 可通过 Compose 的 `--env-file` 读取，免去重复 export。
+
 完整命令及权限前提见 `docs/runtime.md`。镜像入口也支持 `docker exec ... bash` / `bash -lc` 加载环境；直接 `docker exec ... python3` 时应显式使用 `/usr/local/bin/ascend-entrypoint` 包装。
 
 ## 开发检查

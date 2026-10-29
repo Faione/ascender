@@ -8,7 +8,9 @@
 
 Compose 使用 `user: "${LOCAL_UID}:${LOCAL_GID}"` 指定宿主机开发用户身份，不必为每位开发者重建镜像。仅指定数字身份还不够：容器 `/etc/passwd` 中没有该 UID 时，Bash 可能显示 `I have no name!`，Python 的 `pwd.getpwuid()` 等查询也可能失败。设置 `USER`、`PS1` 或 `HOME` 不能补齐用户数据库。[Docker 用户选项](https://docs.docker.com/engine/containers/run/#user)、[passwd 文件含义](https://man7.org/linux/man-pages/man5/passwd.5.html)
 
-使用 `examples/prepare-user.sh` 从所选镜像复制账号文件，在副本中补充 UID/GID 和 `/workspace/home`，由 Compose 只读挂载到 `/etc/passwd`、`/etc/group`。镜像其他系统账号保留；该 UID 已存在时默认复用其用户名，否则使用 `ascend-<UID>`。可用 `LOCAL_USER` 明确指定用户名，若与其他 UID 冲突则报错。主组有对应 GID 时复用组名，否则添加 `ascend-<GID>`。
+使用 `examples/prepare-user.sh` 从所选镜像复制账号文件，在副本中补充 UID/GID 和 `/workspace/home`，由 Compose 只读挂载到 `/etc/passwd`、`/etc/group`。未配置或配置为空时，UID/GID 自动取 `id -u` / `id -g`，用户名默认为 `developer`；显式的 `LOCAL_UID`、`LOCAL_GID`、`LOCAL_USER` 优先。脚本只替换所选 UID 的账号记录，保留其他系统账号；用户名若与其他 UID 冲突则报错。主组有对应 GID 时复用组名，否则添加 `ascend-<GID>`。
+
+脚本同时生成 `IDENTITY_DIR/compose.env`，保存解析后的 `LOCAL_UID`、`LOCAL_GID` 和 `LOCAL_USER`。后续 Compose 使用 `--env-file` 读取，因此不需要手动 export 这三项。独立执行的脚本不能修改父终端环境变量；若在准备后显式 export 不同值，应重新准备账号文件，使配置保持一致。
 
 此脚本不读取或修改宿主机 `/etc/passwd`、`/etc/group`，不挂载宿主机账号库，也不处理密码认证或 shadow。它只创建一个未启动的临时容器读取目标镜像文件，完成后删除；不执行镜像入口。容器启动后直接以所选数字身份运行，普通 `docker compose exec ... bash` 无需再经过 root 初始化/降权。
 
@@ -34,8 +36,6 @@ Compose 的 `user`、`group_add` 和长格式挂载选项见[服务配置文档]
 export COMPOSE_DIR=/path/to/ascend_dev/examples
 export CODE_DIR=/path/to/operator-project
 export DEV_HOME="${CODE_DIR}/.ascend-dev-home"
-export LOCAL_UID="$(id -u)"
-export LOCAL_GID="$(id -g)"
 export ASCEND_IMAGE="$(cat /path/to/build/build-id/image-ref.txt)"
 export IDENTITY_DIR="${DEV_HOME}/.ascend-identity"
 
@@ -46,14 +46,14 @@ bash "$COMPOSE_DIR/prepare-user.sh"
 
 这些是用户手动执行的准备步骤，不由构建脚本管理。`LOCAL_UID` 必须非零；不要用 sudo 改变准备过程的开发用户身份。`DEV_HOME` 可放到代码仓库外的已有目录；示例将其放到项目中，便于理解，需要时加入该项目的忽略规则。使用远程 Docker 时，挂载路径必须存在于 daemon 所在服务器，而非仅存在于本地客户端。
 
-更换镜像、UID/GID 或用户名后，重新执行准备脚本，再用 `docker compose ... up -d --force-recreate` 重建使用中的容器；已有文件 bind mount 不会自动切换到新发布文件的 inode。为不同镜像或不同开发者使用独立的 `IDENTITY_DIR`，避免互相覆盖账号副本。
+需要覆盖默认值时，在运行准备脚本前 export 对应的 `LOCAL_*` 变量。更换镜像、UID/GID 或用户名后，重新执行准备脚本，再用 `docker compose --env-file "$IDENTITY_DIR/compose.env" ... up -d --force-recreate` 重建使用中的容器；已有文件 bind mount 不会自动切换到新发布文件的 inode。为不同镜像或不同开发者使用独立的 `IDENTITY_DIR`，避免互相覆盖账号副本。
 
 仿真环境选择构建出的 `ascend-sim:...` 镜像，仅使用通用配置：
 
 ```bash
-docker compose -f "$COMPOSE_DIR/compose.yaml" config
-docker compose -f "$COMPOSE_DIR/compose.yaml" up -d
-docker compose -f "$COMPOSE_DIR/compose.yaml" exec ascend bash
+docker compose --env-file "$IDENTITY_DIR/compose.env" -f "$COMPOSE_DIR/compose.yaml" config
+docker compose --env-file "$IDENTITY_DIR/compose.env" -f "$COMPOSE_DIR/compose.yaml" up -d
+docker compose --env-file "$IDENTITY_DIR/compose.env" -f "$COMPOSE_DIR/compose.yaml" exec ascend bash
 ```
 
 通用配置不挂 NPU 设备。实际仿真软件若另有运行条件，按供应方要求补充，不从 NPU 配置复制设备和驱动挂载。
@@ -72,9 +72,9 @@ export NPU_HDC_GID="$(stat -c '%g' /dev/hisi_hdc)"
 选择构建出的 `ascend-dev:...` 镜像，并保持同样的两个文件参数：
 
 ```bash
-docker compose -f "$COMPOSE_DIR/compose.yaml" -f "$COMPOSE_DIR/compose.npu.yaml" config
-docker compose -f "$COMPOSE_DIR/compose.yaml" -f "$COMPOSE_DIR/compose.npu.yaml" up -d
-docker compose -f "$COMPOSE_DIR/compose.yaml" -f "$COMPOSE_DIR/compose.npu.yaml" exec ascend bash
+docker compose --env-file "$IDENTITY_DIR/compose.env" -f "$COMPOSE_DIR/compose.yaml" -f "$COMPOSE_DIR/compose.npu.yaml" config
+docker compose --env-file "$IDENTITY_DIR/compose.env" -f "$COMPOSE_DIR/compose.yaml" -f "$COMPOSE_DIR/compose.npu.yaml" up -d
+docker compose --env-file "$IDENTITY_DIR/compose.env" -f "$COMPOSE_DIR/compose.yaml" -f "$COMPOSE_DIR/compose.npu.yaml" exec ascend bash
 ```
 
 `devices` 解决设备映射，`group_add` 解决组身份，二者不能相互替代。设备文件仍须允许对应组访问；驱动库和安装信息也须能被所选用户读取。存在驱动专用授权、ACL 或其他限制时，应遵循该服务器驱动的要求，不能仅凭添加 GID 宣称 NPU 可用。[Docker 设备访问](https://docs.docker.com/engine/containers/run/#runtime-privilege-and-linux-capabilities)
