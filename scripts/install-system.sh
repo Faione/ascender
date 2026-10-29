@@ -16,4 +16,6 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     libssl-dev zlib1g-dev libffi-dev ca-certificates ${extra_packages[@]+"${extra_packages[@]}"}
 rm -rf /var/lib/apt/lists/*
 python3 -c 'import sys; assert sys.version_info[:2] == (3, 10), sys.version'
+python3 -m pip config --global set global.index-url "$PIP_INDEX_URL"
+chmod 644 /etc/pip.conf
 mkdir -p /etc/ascend /usr/local/share/ascend

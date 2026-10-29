@@ -5,7 +5,9 @@ FROM ${BASE_IMAGE} AS system-deps
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ARG APT_MIRROR=
 ARG PIP_INDEX_URL=https://pypi.org/simple
-ENV PIP_INDEX_URL=${PIP_INDEX_URL} PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+# The index is persisted in /etc/pip.conf for all current and future users.
+# Keep it as an ARG so runtime environment does not mask user/global pip config.
+ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 COPY scripts/ /usr/local/lib/ascend/
 RUN --mount=type=bind,source=config/apt-packages.txt,target=/tmp/apt-packages.txt,readonly \
     bash /usr/local/lib/ascend/install-system.sh

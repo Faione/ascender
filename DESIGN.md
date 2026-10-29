@@ -13,7 +13,7 @@
 - 执行不依赖 NPU 的镜像构建检查，输出日志、解析后的配置和构建清单。
 - 将 CANN 与可选仿真环境的加载逻辑写入镜像入口和 Bash 配置。
 
-职责之外：安装包下载、断点续传、服务器上传、宿主机驱动/固件安装、设备分配、容器日常启停、业务代码编译和算子正确性/性能测试。仅提供运行说明、Compose 示例及账号副本准备示例，不在构建工具中实现 `run`、`exec`、`compose up` 等生命周期命令。
+职责之外：安装包下载、断点续传、服务器上传、宿主机驱动/固件安装、设备分配、容器日常启停、业务代码编译和算子正确性/性能测试。提供运行配置生成和账号副本准备示例，不在构建工具中实现 `run`、`exec`、`compose up` 等生命周期命令。
 
 构建不要求宿主机有 NPU。最终镜像的真机验证由使用方在具备驱动、设备和挂载条件的服务器上完成。
 
@@ -145,7 +145,7 @@ ascend_dev/
 | --- | --- | --- |
 | `--workdir DIR` | `/workspace` | 镜像内工作目录，不创建宿主机挂载 |
 | `--apt-mirror URL` | 保留基础镜像 APT 源 | 替换 Ubuntu 软件仓库基础地址；不影响 PIP |
-| `--pip-index URL` | `https://pypi.org/simple` | 构建时安装附加 Python 依赖的源 |
+| `--pip-index URL` | `https://pypi.org/simple` | 写入 `/etc/pip.conf`，供构建和所有运行用户使用；不持久化同名环境变量 |
 | `--apt-package PACKAGE` | 仅安装必要系统依赖 | 可重复，追加系统包，包名可带 APT 版本约束 |
 | `--pip-package SPEC` | 仅安装必要 Python 依赖 | 可重复，追加 PIP 依赖；Shell 调用时给包含比较运算符的约束加引号 |
 | `--pip-constraints FILE` | 无附加约束文件 | 与工具生成的核心版本约束共同生效，冲突时报错 |
@@ -409,9 +409,11 @@ ascend-sim:sim-cann<CANN>-<SOC>-torch<TORCH>-npu<TORCH_NPU>-py310-amd64-<HASH12>
 
 ## 14. 外部源码与 Compose 配合
 
-镜像不包含待验证业务代码。提供 `examples/compose.yaml` 作为通用运行参考，挂载外部代码及可写 HOME，并由运行时 `user: UID:GID` 控制产物归属；NPU 另外叠加 `examples/compose.npu.yaml` 的设备、附加组及只读驱动挂载。仿真只使用通用配置和生成的仿真镜像。
+镜像不包含待验证业务代码。使用 `examples/prepare-runtime.sh` 从镜像引用文件、外部代码目录和输出目录生成单份 `compose.yaml`，将 UID/GID、镜像、挂载路径及设备组写为具体值。日常 Compose 命令不需要 export 或环境插值文件；原有两份变量模板由此替代。
 
-数字 UID/GID 不等于存在用户记录。增加 `examples/prepare-user.sh`，手动从所选镜像复制 passwd/group 并在副本中补齐运行用户，再由 Compose 只读挂载；同时保留镜像系统账号，使普通 exec、用户名和 HOME 查询都可用。该准备过程不启动容器、不修改宿主机账号文件，不在入口引入 root 初始化或降权步骤。
+生成器默认获取当前 UID/GID，用户名为 `developer`；使用命令行覆盖，不继承旧的运行配置环境变量。调用底层 `examples/prepare-user.sh` 复制 passwd/group 并补齐用户，Compose 只读挂载账号副本，保证普通 exec、用户名和 HOME 查询可用。准备过程不启动容器、不修改宿主机账号文件，不在入口引入 root 初始化或降权步骤。
+
+根据镜像标签识别 NPU/仿真目标；NPU 自动读取所选设备 GID 并去重，补充只读驱动挂载，仿真不要求设备和驱动。源码、HOME 和账号文件分别挂载，生成后可在任意目录用 `docker compose -f` 操作。
 
 Compose 引用构建报告中的自动生成名称，不自定义构建 tag，也不在 Compose 中重复制作镜像。UID/GID、设备和宿主机路径不成为镜像构建参数，不参与输出 tag。
 

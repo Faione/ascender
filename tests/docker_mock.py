@@ -21,8 +21,11 @@ elif args == ["info"]:
 elif args[:2] == ["buildx", "inspect"]:
     print("Driver: docker")
 elif args[:2] == ["image", "inspect"]:
-    if args[args.index("--format") + 1] == "{{.Os}}/{{.Architecture}}":
+    format_string = args[args.index("--format") + 1]
+    if format_string == "{{.Os}}/{{.Architecture}}":
         print(os.environ.get("MOCK_PLATFORM", "linux/amd64"))
+    elif "dev.ascend.target" in format_string:
+        print(os.environ.get("MOCK_TARGET", "simulation"))
     else:
         print("sha256:" + "a" * 64)
 elif args[:2] == ["buildx", "build"]:

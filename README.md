@@ -88,6 +88,7 @@ bash build-image.sh --help
 - 旧目录用 `--cann-root /home/user/cann-run` 和 `--torch-root /home/user/cann-run/torch`；分别读取 `<soc>/<CANN版本>/` 与 `<Torch基础版本>/`，不扫描上级目录。
 - 通用相对文件路径以调用目录为基准；CAModel 的 archive/init/env/check 相对路径以 `--camodel-dir` 为基准。
 - `--apt-mirror` 为 Ubuntu 仓库基础 URL（包括 `/ubuntu` 路径），`--pip-index` 为独立 PIP 索引；URL 不接受凭据/查询串。私有源认证未实现。
+- `--pip-index` 写入镜像内所有用户可读的 `/etc/pip.conf`，root、developer 及后续新增用户均默认使用该源。镜像不持久设置 `PIP_INDEX_URL`；用户配置、运行期环境变量和命令行仍可按 pip 优先级覆盖全局默认值。构建时同时检查 root 和非 root 用户能读取该全局源。
 - `--apt-package vim --apt-package htop` 和 `--pip-package pytest --pip-package 'numpy<2'` 可以重复追加。Python 包支持名称、extras 和版本约束；直接 URL、VCS、markers 及 pip 选项不作为该参数输入。附加约束文件用 `--pip-constraints`。
 - `--post-install` 在公共环境安装后执行 Bash 定制脚本，随后再次检查核心版本。它先于 CAModel 初始化；仿真特有的目录整理放在 `init.sh` 中。不要向它写宿主机安装逻辑。
 - `--network none` 仅禁用 RUN 的网络；当前没有完整离线依赖管理。`--no-cache` 不删除现有缓存。
@@ -117,9 +118,19 @@ ascend-sim:sim-cann9.1.0-950-torch2.10.0_cpu-npu2.10.0.post4-py310-amd64-<HASH12
 
 ## 外部代码验证
 
-使用 `examples/compose.yaml` 挂载代码与可写 HOME，通过宿主机 UID/GID 控制产物属主。启动前用 `examples/prepare-user.sh` 从目标镜像生成带对应用户的 passwd/group 副本，由 Compose 只读挂载，避免 `I have no name!` 和用户查询失败。NPU 叠加 `examples/compose.npu.yaml` 的设备、组和只读驱动挂载。
+使用 `examples/prepare-runtime.sh` 生成完整运行配置，无需 export 或 `--env-file`：
 
-准备脚本在未配置 `LOCAL_UID` / `LOCAL_GID` 时自动获取当前 UID/GID，`LOCAL_USER` 默认 `developer`；显式值优先。生成的 `IDENTITY_DIR/compose.env` 可通过 Compose 的 `--env-file` 读取，免去重复 export。
+```bash
+bash examples/prepare-runtime.sh \
+  --image-ref-file /data/build/run-001/image-ref.txt \
+  --code-dir /data/operator-project \
+  --output-dir /data/ascend-runtime
+
+docker compose -f /data/ascend-runtime/compose.yaml up -d
+docker compose -f /data/ascend-runtime/compose.yaml exec ascend bash
+```
+
+UID/GID 默认取当前开发用户，用户名默认 `developer`，可用命令行覆盖；旧的 `LOCAL_*` 等终端配置不影响生成结果。生成器准备可写 HOME 和容器账号副本，避免 `I have no name!`，并按镜像标签自动选择 NPU/仿真配置。NPU 模式检查设备和驱动路径，读取设备 GID 写入配置；仿真不要求这些材料。旧的变量模板由生成的 `compose.yaml` 替代。
 
 完整命令及权限前提见 `docs/runtime.md`。镜像入口也支持 `docker exec ... bash` / `bash -lc` 加载环境；直接 `docker exec ... python3` 时应显式使用 `/usr/local/bin/ascend-entrypoint` 包装。
 

@@ -27,6 +27,7 @@ if sys.argv[1]:
     torch.add(torch.tensor([1]), torch.tensor([2]))
 PY
 python3 -m pip check
+[[ "$(python3 -m pip --isolated config get global.index-url)" == "$PIP_INDEX_URL" ]]
 # Check the common runtime as an unmapped numeric user, with its own writable
 # HOME. No host UID is embedded and no mounted workspace is chowned.
 setpriv --reuid=65534 --regid=65534 --clear-groups bash -e -c '
@@ -34,10 +35,11 @@ setpriv --reuid=65534 --regid=65534 --clear-groups bash -e -c '
     trap '\''rm -rf -- "$runtime_home"'\'' EXIT
     unset _ASCEND_CANN_ENV_LOADED _ASCEND_SIM_ENV_LOADED
     source /etc/ascend/environment.sh
+    [[ "$(python3 -m pip --isolated config get global.index-url)" == "$3" ]]
     atc --help >/dev/null
     "$1" --version >/dev/null
     if [[ -n "$2" ]]; then python3 -I -c "import torch; assert torch.tensor([1]).item() == 1"; fi
-' bash "$compiler" "$TORCH_VERSION"
+' bash "$compiler" "$TORCH_VERSION" "$PIP_INDEX_URL"
 {
     printf '[system]\n'
     dpkg-query -W -f='${Package}=${Version}\n'

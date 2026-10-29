@@ -1,102 +1,102 @@
-# 外部代码挂载与 Compose 运行说明
+# 外部代码验证与 Compose 配置生成
 
-本文及 `examples/compose*.yaml` 是运行参考，不扩展镜像构建工具的职责。首版工具已实现；真实镜像及设备尚未验收，示例须在镜像已构建、目标服务器条件满足后使用。
+运行前使用 `examples/prepare-runtime.sh`，一次生成具有具体镜像、UID/GID、路径和设备组的 `compose.yaml`。日常 Compose 命令无需逐项 export，也不需要 `.env` 或 `--env-file`。镜像构建工具仍只负责制作镜像，准备脚本只生成配置，不启动业务容器。
 
-## 权限约定
+## 最小使用流程
 
-以下以普通 Linux rootful Docker、未启用 user namespace 重映射为前提。源码和产物权限取决于数字 UID/GID 以及目录权限、ACL，不要求宿主机与容器用户名相同。镜像默认 root 时，以 root 在可写源码挂载中构建，会使新建产物通常归宿主机 root 所有。
-
-Compose 使用 `user: "${LOCAL_UID}:${LOCAL_GID}"` 指定宿主机开发用户身份，不必为每位开发者重建镜像。仅指定数字身份还不够：容器 `/etc/passwd` 中没有该 UID 时，Bash 可能显示 `I have no name!`，Python 的 `pwd.getpwuid()` 等查询也可能失败。设置 `USER`、`PS1` 或 `HOME` 不能补齐用户数据库。[Docker 用户选项](https://docs.docker.com/engine/containers/run/#user)、[passwd 文件含义](https://man7.org/linux/man-pages/man5/passwd.5.html)
-
-使用 `examples/prepare-user.sh` 从所选镜像复制账号文件，在副本中补充 UID/GID 和 `/workspace/home`，由 Compose 只读挂载到 `/etc/passwd`、`/etc/group`。未配置或配置为空时，UID/GID 自动取 `id -u` / `id -g`，用户名默认为 `developer`；显式的 `LOCAL_UID`、`LOCAL_GID`、`LOCAL_USER` 优先。脚本只替换所选 UID 的账号记录，保留其他系统账号；用户名若与其他 UID 冲突则报错。主组有对应 GID 时复用组名，否则添加 `ascend-<GID>`。
-
-脚本同时生成 `IDENTITY_DIR/compose.env`，保存解析后的 `LOCAL_UID`、`LOCAL_GID` 和 `LOCAL_USER`。后续 Compose 使用 `--env-file` 读取，因此不需要手动 export 这三项。独立执行的脚本不能修改父终端环境变量；若在准备后显式 export 不同值，应重新准备账号文件，使配置保持一致。
-
-此脚本不读取或修改宿主机 `/etc/passwd`、`/etc/group`，不挂载宿主机账号库，也不处理密码认证或 shadow。它只创建一个未启动的临时容器读取目标镜像文件，完成后删除；不执行镜像入口。容器启动后直接以所选数字身份运行，普通 `docker compose exec ... bash` 无需再经过 root 初始化/降权。
-
-匹配身份并不授予额外权限：宿主机用户本身应能读取源码及遍历目录，且可写构建输出位置。若依赖共享项目组，则在 `group_add` 中追加该组的数字 GID；指定 UID/GID 不会自动复制宿主机所有附加组。NFS、ACL、SELinux 及 rootless/userns-remap 环境须根据实际映射另行检查。[Docker 附加组](https://docs.docker.com/engine/containers/run/#additional-groups)、[用户命名空间限制](https://docs.docker.com/engine/security/userns-remap/)
-
-## 通用配置
-
-`examples/compose.yaml` 对 NPU 与仿真共用：
-
-- `image` 从构建输出的 `image-ref.txt` 读取后传入；这是选择已有镜像，不能用于自定义构建 tag。保留 `pull_policy: never`，不配置 `build`。
-- 将任意外部代码目录映射到固定的 `/workspace/code`，不再绑定参考仓库的 `examples/add_pipeline`。
-- 使用宿主机 UID/GID，源码默认可写，兼容会在项目内生成 `build/`、扩展模块等文件的构建方式。
-- 使用准备好的容器账号副本，保证用户名、主组和 HOME 的查询一致；不会用宿主机账号库替换镜像系统账号。
-- 将单独的宿主机可写目录挂为 `/workspace/home`，显式设置 HOME 和缓存根目录，避免程序尝试写入 `/root`。
-- 使用长格式 bind mount 和 `create_host_path: false`；挂载路径拼错或不存在时报错，不由 Docker 创建错误目录。
-- 保留镜像入口，不覆盖 `entrypoint`，保证 CANN/仿真环境加载。
-
-Compose 的 `user`、`group_add` 和长格式挂载选项见[服务配置文档](https://docs.docker.com/reference/compose-file/services/)。Bind mount 将遮蔽目标目录的原有内容，因此只挂载工作目录，不用源码覆盖 CANN 或 `/opt/CAModel` 安装目录。[Bind mount 说明](https://docs.docker.com/engine/storage/bind-mounts/)
-
-在目标 Docker 服务器上，以拥有代码目录的普通开发用户准备变量。先将 `COMPOSE_DIR`、`CODE_DIR` 和镜像引用文件路径替换为真实绝对路径：
+在目标 Docker 服务器上，以拥有待验证代码的普通开发用户执行。将下面路径替换为真实路径：
 
 ```bash
-export COMPOSE_DIR=/path/to/ascend_dev/examples
-export CODE_DIR=/path/to/operator-project
-export DEV_HOME="${CODE_DIR}/.ascend-dev-home"
-export ASCEND_IMAGE="$(cat /path/to/build/build-id/image-ref.txt)"
-export IDENTITY_DIR="${DEV_HOME}/.ascend-identity"
+bash /path/to/ascend_dev/examples/prepare-runtime.sh \
+  --image-ref-file /data/build/run-001/image-ref.txt \
+  --code-dir /data/operator-project \
+  --output-dir /data/ascend-runtime
 
-test -d "$CODE_DIR" && test -r "$CODE_DIR" && test -w "$CODE_DIR"
-mkdir -p "$DEV_HOME"
-bash "$COMPOSE_DIR/prepare-user.sh"
+docker compose -f /data/ascend-runtime/compose.yaml config
+docker compose -f /data/ascend-runtime/compose.yaml up -d
+docker compose -f /data/ascend-runtime/compose.yaml exec ascend bash
 ```
 
-这些是用户手动执行的准备步骤，不由构建脚本管理。`LOCAL_UID` 必须非零；不要用 sudo 改变准备过程的开发用户身份。`DEV_HOME` 可放到代码仓库外的已有目录；示例将其放到项目中，便于理解，需要时加入该项目的忽略规则。使用远程 Docker 时，挂载路径必须存在于 daemon 所在服务器，而非仅存在于本地客户端。
+镜像引用来自构建成功后生成的 `image-ref.txt`；不重新构建、不拉取镜像、不自定义 tag。准备脚本从镜像的 `dev.ascend.target` 标签识别 NPU 或仿真环境。没有该标签的兼容镜像，可用 `--target npu` 或 `--target simulation` 指定；与已有标签冲突时报错。
 
-需要覆盖默认值时，在运行准备脚本前 export 对应的 `LOCAL_*` 变量。更换镜像、UID/GID 或用户名后，重新执行准备脚本，再用 `docker compose --env-file "$IDENTITY_DIR/compose.env" ... up -d --force-recreate` 重建使用中的容器；已有文件 bind mount 不会自动切换到新发布文件的 inode。为不同镜像或不同开发者使用独立的 `IDENTITY_DIR`，避免互相覆盖账号副本。
+输出目录：
 
-仿真环境选择构建出的 `ascend-sim:...` 镜像，仅使用通用配置：
+```text
+ascend-runtime/
+├── compose.yaml
+├── home/                 # 可写 HOME、缓存，重新生成时保留
+└── identity/
+    ├── passwd            # 容器专用账号副本
+    ├── group
+    └── identity.txt      # 镜像 ID、UID/GID、用户名
+```
+
+`image`、`user`、挂载路径、NPU 设备与 `group_add` 都是已确定的具体值，不引用 `ASCEND_IMAGE`、`LOCAL_UID`、`CODE_DIR` 等终端变量。固定的容器环境变量 HOME、XDG_CACHE_HOME 仍由 YAML 设置。路径中的字面 `$` 会转义为 Compose 的 `$$`，避免意外插值。[Compose 插值规则](https://docs.docker.com/reference/compose-file/interpolation/)
+
+## 参数
+
+| 参数 | 默认值或要求 |
+| --- | --- |
+| `--image-ref-file FILE` | 必填，构建报告中的单行镜像引用 |
+| `--code-dir DIR` | 必填，已存在、可读写的外部代码目录 |
+| `--output-dir DIR` | 必填，生成配置、账号文件和 HOME 的目录 |
+| `--target npu\|simulation` | 默认读取镜像标签 |
+| `--uid ID`、`--gid ID` | 默认 `id -u`、`id -g`，UID 必须非零 |
+| `--user NAME` | 默认 `developer` |
+| `--group-add GID` | 可重复，增加共享项目等所需的补充组 |
+| `--device FILE` | NPU 专用，可重复；显式指定后替代默认设备清单 |
+| `--driver-root DIR` | NPU 专用，默认 `/usr/local/Ascend/driver` |
+| `--dcmi-dir DIR` | NPU 专用，默认 `/usr/local/dcmi` |
+| `--install-info FILE` | NPU 专用，默认 `/etc/ascend_install.info` |
+
+准备脚本只读取命令行和自身默认值，不继承旧的 `LOCAL_*`、`ASCEND_IMAGE`、`NPU_*_GID` 等配置变量。相对路径以调用目录为基准，生成配置使用绝对路径；可以从任意目录通过 `-f` 使用。
+
+## NPU 配置
+
+默认检查并映射 `/dev/davinci0`、`/dev/davinci_manager`、`/dev/hisi_hdc`，读取各设备节点的实际 GID，去重后写入 `group_add`，不假定它们属于同一组。驱动库、DCMI 和安装信息只读挂载。不同服务器布局可以显式调整：
 
 ```bash
-docker compose --env-file "$IDENTITY_DIR/compose.env" -f "$COMPOSE_DIR/compose.yaml" config
-docker compose --env-file "$IDENTITY_DIR/compose.env" -f "$COMPOSE_DIR/compose.yaml" up -d
-docker compose --env-file "$IDENTITY_DIR/compose.env" -f "$COMPOSE_DIR/compose.yaml" exec ascend bash
+bash /path/to/ascend_dev/examples/prepare-runtime.sh \
+  --image-ref-file /data/build/run-001/image-ref.txt \
+  --code-dir /data/operator-project \
+  --output-dir /data/ascend-runtime \
+  --device /dev/davinci1 \
+  --device /dev/davinci_manager \
+  --device /dev/hisi_hdc \
+  --driver-root /opt/ascend-driver \
+  --dcmi-dir /opt/dcmi
 ```
 
-通用配置不挂 NPU 设备。实际仿真软件若另有运行条件，按供应方要求补充，不从 NPU 配置复制设备和驱动挂载。
+自定义驱动根目录应含 `lib64/` 和 `version.info`。生成的容器内目标仍为 `/usr/local/Ascend/driver/...` 和 `/usr/local/dcmi`。仿真目标不检查或挂载 NPU 设备/驱动，传入这类专用参数会报错。
 
-## NPU 补充配置
+`devices` 提供设备映射，`group_add` 提供组身份；设备本身仍须允许相应组访问，驱动库及安装信息也须可读。两者不能替代驱动的实际授权和兼容性要求。[Docker 设备访问](https://docs.docker.com/engine/containers/run/#runtime-privilege-and-linux-capabilities)
 
-`examples/compose.npu.yaml` 叠加设备、设备组和只读驱动挂载，沿用参考资料的路径。先检查服务器实际布局；三类设备可能属于不同的组，不能统一假定是某个固定 GID。
+## 用户记录与文件权限
+
+以下以普通 Linux rootful Docker、未启用 user namespace 重映射为前提。UID/GID 决定挂载代码的权限和新建产物属主。仅指定数字身份时，若容器缺少用户记录，Bash 会出现 `I have no name!`，用户查询也可能失败。[passwd 说明](https://man7.org/linux/man-pages/man5/passwd.5.html)
+
+生成器调用底层 `prepare-user.sh`，从目标镜像复制账号表，在副本中为所选 UID 写入用户名、主组和 `/workspace/home`，保留其他系统账号。副本只读挂载到容器 `/etc/passwd`、`/etc/group`，环境变量 HOME 同样指向 `/workspace/home`。已有的同 UID 记录被替换；用户名被其他 UID 占用时拒绝生成。
+
+该过程只创建一个未启动的临时容器读取账号文件，随后删除；不执行镜像入口、不修改宿主机账号、不复制密码数据库，也不在容器入口运行 root 初始化或身份切换。普通 `docker compose ... exec ascend bash` 即使用匹配 UID/GID 和完整用户名记录。
+
+默认 UID/GID 与当前开发用户一致，无需为每人重建镜像。显式覆盖身份时，应自行确保该身份能写源码和生成的 HOME；脚本不对外部项目自动 chown，不以 `chmod 777` 处理权限。如果项目依赖宿主机附加组，可通过 `--group-add` 指定数字 GID；不会自动导入宿主机所有组。[Docker 附加组](https://docs.docker.com/engine/containers/run/#additional-groups)
+
+## 更新与验证
+
+修改镜像、代码目录、UID/GID、设备或组后重新执行生成命令，再执行：
 
 ```bash
-ls -ln /dev/davinci0 /dev/davinci_manager /dev/hisi_hdc
-export NPU_DEVICE_GID="$(stat -c '%g' /dev/davinci0)"
-export NPU_MANAGER_GID="$(stat -c '%g' /dev/davinci_manager)"
-export NPU_HDC_GID="$(stat -c '%g' /dev/hisi_hdc)"
+docker compose -f /data/ascend-runtime/compose.yaml up -d --force-recreate
 ```
 
-选择构建出的 `ascend-dev:...` 镜像，并保持同样的两个文件参数：
+重新生成会替换配置和账号副本，保留代码及 HOME 内容；不要让多个开发者或不同环境共用同一输出目录。生成文件可检查和手动编辑，后续重新生成会覆盖这些配置编辑。已有文件 bind mount 保留旧 inode，因此账号文件更新后应重建运行中的容器。
 
-```bash
-docker compose --env-file "$IDENTITY_DIR/compose.env" -f "$COMPOSE_DIR/compose.yaml" -f "$COMPOSE_DIR/compose.npu.yaml" config
-docker compose --env-file "$IDENTITY_DIR/compose.env" -f "$COMPOSE_DIR/compose.yaml" -f "$COMPOSE_DIR/compose.npu.yaml" up -d
-docker compose --env-file "$IDENTITY_DIR/compose.env" -f "$COMPOSE_DIR/compose.yaml" -f "$COMPOSE_DIR/compose.npu.yaml" exec ascend bash
-```
+先运行 `config` 查看展开后的配置；启动后执行 `id`、`whoami`、`getent passwd "$(id -u)"`，确认用户名和 HOME，检查目录可写及宿主机产物属主。NPU 再验证最小设备运算；仿真再执行实际 CAModel 的最小测试。
 
-`devices` 解决设备映射，`group_add` 解决组身份，二者不能相互替代。设备文件仍须允许对应组访问；驱动库和安装信息也须能被所选用户读取。存在驱动专用授权、ACL 或其他限制时，应遵循该服务器驱动的要求，不能仅凭添加 GID 宣称 NPU 可用。[Docker 设备访问](https://docs.docker.com/engine/containers/run/#runtime-privilege-and-linux-capabilities)
+镜像入口负责加载 CANN 和仿真环境。不要通过 Compose 覆盖 `entrypoint`；直接 `docker exec ... python3 ...` 时可使用 `/usr/local/bin/ascend-entrypoint` 包装。CAModel 日志、缓存和输出应写 HOME、项目输出目录或 `/tmp`；有安装树写入要求时需为具体子目录配置权限。
 
-这里没有默认添加 `privileged: true`，也不通过 `chmod 777`、关闭文件权限或在入口递归 chown 代码目录处理问题。若现有目录已含 root 产物，应确认具体输出范围后由所有者/管理员修复，不对整个外部项目自动修改属主。
+NFS、ACL、SELinux、rootless/userns-remap 的权限映射需按实际情况检查；使用远程 Docker 时，路径必须存在于 daemon 所在服务器。[用户命名空间说明](https://docs.docker.com/engine/security/userns-remap/)
 
-## 镜像需要配合的事项
+底层 `prepare-user.sh` 保留原有环境变量接口和 `compose.env` 输出，供单独准备账号的已有流程使用；新生成流程不发布或依赖该环境文件。原有两份环境变量 Compose 模板由生成的单份 `compose.yaml` 替代。
 
-1. 构建阶段仍使用 root 安装；运行阶段支持 Compose 传入任意数字 UID/GID，不在镜像中固定宿主机账号。
-2. 入口仅加载环境并执行命令，不要求 root，不运行 useradd、chown、运行期安装依赖等操作。
-3. CANN、Torch 和仿真程序的必要文件对运行用户可读、可执行；构建时验证，避免依赖 root 专属的 Python 用户安装目录或缓存。
-4. 源码和缓存位于独立挂载目录；CAModel 日志、临时文件和编译输出优先写 HOME、项目输出目录或 `/tmp`。若某个 CAModel 必须写安装树，应只为明确的可写子目录设计权限/挂载，不能假定整个 `/opt/CAModel` 可写。
-5. Compose 的账号副本将 passwd HOME 与环境变量 HOME 对齐。仅设置环境变量不够，必须先执行准备脚本；镜像安装权限通过不代表任意 CAModel 已完成非 root 运行验收。
-
-## 可选的只读源码方案
-
-若项目支持源码外构建，可将代码挂载设为 `read_only: true`，另挂载由开发用户预先创建的可写输出目录，如 `/workspace/build`。例如 CMake 可使用 `cmake -S /workspace/code -B /workspace/build`；其他项目需使用其对应的构建方式，不能仅修改 Compose 就假设它支持源码外构建。
-
-当前参考算子采用项目内构建，因此默认示例保留代码可写，并通过 UID/GID 保证产物归属。代码目录已有写权限时无需修改宿主机权限。
-
-## 使用前验证
-
-先执行 `docker compose ... config` 检查配置展开；启动后执行 `id`、`whoami`、`getent passwd "$(id -u)"`，确认用户名存在、passwd 中的 HOME 为 `/workspace/home`，再检查 HOME 可写，并在源码目录创建再删除一个临时测试文件，核对宿主机看到的 UID/GID。NPU 再单独检查设备和最小运算；仿真执行该 CAModel 的最小验证。
-
-当前示例尚未在实际 Docker/NPU/CAModel 环境运行验证，设备及驱动路径是参考布局，不是所有型号的固定要求。
+当前验证使用本地文件、Docker 替身和通用字符设备样本；真实 Docker/NPU/CAModel 的运行验收仍需在目标服务器完成。
