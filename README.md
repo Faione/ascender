@@ -6,7 +6,7 @@
 
 ## Quick Start
 
-以下以 Ascend 950 仿真环境为例。在装有 Python 3.9+、Docker 和 Buildx 的机器上，进入本项目目录执行，无需 `pip install`。
+以下以构建 Ascend 950 的 `simulation` 目标为例。在装有 Python 3.9+、Docker 和 Buildx 的机器上，进入本项目目录执行，无需 `pip install`。
 
 **1. 准备材料和基础镜像。** 下载并按原名保存到以下目录，具体文件名及下载入口见[材料目录](#材料目录)和[下载说明](docs/downloads.md)：
 
@@ -23,18 +23,31 @@
 docker pull --platform linux/amd64 ubuntu:22.04
 ```
 
-**2. 构建镜像。** 工具自动选择配对的仿真包，解压到 `/opt/CAModel/` 并执行初始化：
+**2. 构建 simulation 镜像。** 通过两次 `--camodel-archive` 明确选择主包和配置包，工具将内容解压到 `/opt/CAModel/` 并执行初始化：
 
 ```bash
 python3 build.py \
   --target simulation --soc 950 --cann-version 9.1.0 \
   --torch-version 2.10.0+cpu --torch-npu-version 2.10.0.post4 \
-  --materials-root /data/ascend-materials
+  --materials-root /data/ascend-materials \
+  --camodel-archive x86_64_ESLMODEL_Ascend950DT_123A1.zip \
+  --camodel-archive x86_64_ESLMODEL_Ascend950DT_123A1_config.zip
 ```
 
 首次使用可先在上述命令末尾追加 `--check --files-only` 仅检查材料，或追加 `--check` 同时检查 Docker；检查通过后移除这些选项进行构建。若已准备仿真自检脚本，可追加 `--camodel-check check.sh`。
 
-构建 NPU 环境时，将 `--target simulation` 改为 `--target npu`，无需准备 `camodel/`。两个目标均不要求构建主机具有 NPU；运行 NPU 环境需要目标服务器的设备和驱动。
+**指定不同的 CAModel：** 将上述两个 `--camodel-archive` 的值替换为需要的配对文件名即可，例如另一套包名为 `x86_64_ESLMODEL_Ascend950DT_456B2.zip` 和 `x86_64_ESLMODEL_Ascend950DT_456B2_config.zip`（以实际供应方文件为准）。相对路径以 `/data/ascend-materials/camodel/` 为基准；包位于其他目录时，直接使用绝对路径：
+
+```text
+--camodel-archive /data/models/456B2/x86_64_ESLMODEL_Ascend950DT_456B2.zip
+--camodel-archive /data/models/456B2/x86_64_ESLMODEL_Ascend950DT_456B2_config.zip
+```
+
+显式指定后只使用这两个包，忽略目录内其他 ZIP。省略全部 `--camodel-archive` 时自动查找 `camodel/*ESLMODEL*.zip`，该目录必须只有一套主包/配置包。包内容变化会影响自动生成的镜像 tag。
+
+若不同 CAModel 需要独立脚本，可同时指定 `--camodel-init /data/models/456B2/init.sh`、`--camodel-env /data/models/456B2/env.sh` 和可选的 `--camodel-check /data/models/456B2/check.sh`。脚本默认仍从材料根目录的 `camodel/` 读取，不会随 ZIP 的绝对路径自动切换；只有实际提供了相应文件才添加这些选项。
+
+构建和运行 simulation 环境均无需 NPU 设备。NPU 目标的独立构建命令见[构建](#构建)。
 
 **3. 生成运行配置并进入容器。** 构建成功后打印 `Report: ...`，该目录中的 `image-ref.txt` 保存自动生成的镜像名。将下面的 `/path/to/report/image-ref.txt` 替换为实际文件，`/data/operator-project` 替换为已存在、可读写的待验证代码目录。在目标 Docker 服务器上以开发用户执行：
 
