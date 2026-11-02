@@ -1,13 +1,13 @@
 # 外部代码验证与 Compose 配置生成
 
-运行前使用 `examples/prepare-runtime.sh`，一次生成具有具体镜像、UID/GID、路径和设备组的 `compose.yaml`。日常 Compose 命令无需逐项 export，也不需要 `.env` 或 `--env-file`。镜像构建工具仍只负责制作镜像，准备脚本只生成配置，不启动业务容器。
+运行前使用 `prepare_runtime.py`，一次生成具有具体镜像、UID/GID、路径和设备组的 `compose.yaml`。日常 Compose 命令无需逐项 export，也不需要 `.env` 或 `--env-file`。镜像构建工具仍只负责制作镜像，准备脚本只生成配置，不启动业务容器。
 
 ## 最小使用流程
 
 在目标 Docker 服务器上，以拥有待验证代码的普通开发用户执行。将下面路径替换为真实路径：
 
 ```bash
-bash /path/to/ascend_dev/examples/prepare-runtime.sh \
+python3 /path/to/ascend_dev/prepare_runtime.py \
   --image-ref-file /data/build/run-001/image-ref.txt \
   --code-dir /data/operator-project \
   --output-dir /data/ascend-runtime
@@ -41,7 +41,7 @@ ascend-runtime/
 | `--code-dir DIR` | 必填，已存在、可读写的外部代码目录 |
 | `--output-dir DIR` | 必填，生成配置、账号文件和 HOME 的目录 |
 | `--target npu\|simulation` | 默认读取镜像标签 |
-| `--uid ID`、`--gid ID` | 默认 `id -u`、`id -g`，UID 必须非零 |
+| `--uid ID`、`--gid ID` | 默认 `os.getuid()`、`os.getgid()`，UID 必须非零 |
 | `--user NAME` | 默认 `developer` |
 | `--group-add GID` | 可重复，增加共享项目等所需的补充组 |
 | `--device FILE` | NPU 专用，可重复；显式指定后替代默认设备清单 |
@@ -56,7 +56,7 @@ ascend-runtime/
 默认检查并映射 `/dev/davinci0`、`/dev/davinci_manager`、`/dev/hisi_hdc`，读取各设备节点的实际 GID，去重后写入 `group_add`，不假定它们属于同一组。驱动库、DCMI 和安装信息只读挂载。不同服务器布局可以显式调整：
 
 ```bash
-bash /path/to/ascend_dev/examples/prepare-runtime.sh \
+python3 /path/to/ascend_dev/prepare_runtime.py \
   --image-ref-file /data/build/run-001/image-ref.txt \
   --code-dir /data/operator-project \
   --output-dir /data/ascend-runtime \
@@ -75,7 +75,7 @@ bash /path/to/ascend_dev/examples/prepare-runtime.sh \
 
 以下以普通 Linux rootful Docker、未启用 user namespace 重映射为前提。UID/GID 决定挂载代码的权限和新建产物属主。仅指定数字身份时，若容器缺少用户记录，Bash 会出现 `I have no name!`，用户查询也可能失败。[passwd 说明](https://man7.org/linux/man-pages/man5/passwd.5.html)
 
-生成器调用底层 `prepare-user.sh`，从目标镜像复制账号表，在副本中为所选 UID 写入用户名、主组和 `/workspace/home`，保留其他系统账号。副本只读挂载到容器 `/etc/passwd`、`/etc/group`，环境变量 HOME 同样指向 `/workspace/home`。已有的同 UID 记录被替换；用户名被其他 UID 占用时拒绝生成。
+生成器通过独立的 `ascender/accounts.py` 模块，从目标镜像复制账号表，在副本中为所选 UID 写入用户名、主组和 `/workspace/home`，保留其他系统账号。副本只读挂载到容器 `/etc/passwd`、`/etc/group`，环境变量 HOME 同样指向 `/workspace/home`。已有的同 UID 记录被替换；用户名被其他 UID 占用时拒绝生成。
 
 该过程只创建一个未启动的临时容器读取账号文件，随后删除；不执行镜像入口、不修改宿主机账号、不复制密码数据库，也不在容器入口运行 root 初始化或身份切换。普通 `docker compose ... exec ascend bash` 即使用匹配 UID/GID 和完整用户名记录。
 
@@ -95,8 +95,8 @@ docker compose -f /data/ascend-runtime/compose.yaml up -d --force-recreate
 
 镜像入口负责加载 CANN 和仿真环境。不要通过 Compose 覆盖 `entrypoint`；直接 `docker exec ... python3 ...` 时可使用 `/usr/local/bin/ascend-entrypoint` 包装。CAModel 日志、缓存和输出应写 HOME、项目输出目录或 `/tmp`；有安装树写入要求时需为具体子目录配置权限。
 
-NFS、ACL、SELinux、rootless/userns-remap 的权限映射需按实际情况检查；使用远程 Docker 时，路径必须存在于 daemon 所在服务器。[用户命名空间说明](https://docs.docker.com/engine/security/userns-remap/)
+生成器要求本地 Docker context，挂载路径必须存在于本机。NFS、ACL、SELinux、rootless/userns-remap 的权限映射需按实际情况检查。[用户命名空间说明](https://docs.docker.com/engine/security/userns-remap/)
 
-底层 `prepare-user.sh` 保留原有环境变量接口和 `compose.env` 输出，供单独准备账号的已有流程使用；新生成流程不发布或依赖该环境文件。原有两份环境变量 Compose 模板由生成的单份 `compose.yaml` 替代。
+旧 Bash 入口和 `compose.env` 接口已移除，账号准备通过 Python 模块完成。生成器无需安装第三方 Python 包；需要 Python 3.9+ 和可访问的本地 Docker。
 
 当前验证使用本地文件、Docker 替身和通用字符设备样本；真实 Docker/NPU/CAModel 的运行验收仍需在目标服务器完成。

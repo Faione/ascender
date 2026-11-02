@@ -1,18 +1,22 @@
-"""CLI/ZIP/environment tests. Python is a test dependency only, not a host runtime requirement."""
+"""CLI/ZIP/environment tests. Python host orchestration uses only the standard library."""
 import json
 import os
 from pathlib import Path
 import re
 import shlex
 import shutil
+import signal
 import stat
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
+MAIN = "x86_64_ESLMODEL_Ascend950DT_123A1.zip"
+CONFIG = MAIN[:-4] + "_config.zip"
 
 
 class BuilderTests(unittest.TestCase):
@@ -21,17 +25,19 @@ class BuilderTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.path = Path(self.temp.name)
         self.materials = self.path / "materials"
-        self.cann = self.materials / "cann/9.1.0/linux-amd64"
-        self.torch = self.materials / "torch/2.10.0/cp310/linux-amd64"
-        self.cam = self.materials / "camodel/950/9.1.0"
+        self.cann = self.materials / "cann"
+        self.torch = self.materials / "torch"
+        self.cam = self.materials / "camodel"
         for directory in (self.cann, self.torch, self.cam):
             directory.mkdir(parents=True)
         for name in ("Ascend-cann-toolkit_9.1.0_linux-x86_64.run", "Ascend-cann-950-ops_9.1.0_linux-x86_64.run"):
             (self.cann / name).write_text("fixture installer; must not execute on host\n")
         for name in ("torch-2.10.0+cpu", "torch_npu-2.10.0.post4"):
             (self.torch / f"{name}-cp310-cp310-manylinux_2_28_x86_64.whl").write_bytes(b"fixture wheel")
-        with zipfile.ZipFile(self.cam / "model.zip", "w") as archive:
+        with zipfile.ZipFile(self.cam / MAIN, "w") as archive:
             archive.writestr("model.txt", "fixture model")
+        with zipfile.ZipFile(self.cam / CONFIG, "w") as archive:
+            archive.writestr("config/model.conf", "fixture config")
         (self.cam / "init.sh").write_text("#!/bin/bash\ntrue\n")
         self.env = {key: value for key, value in os.environ.items()
                     if not key.startswith("ASCEND_DEV_") and key != "DOCKER_HOST"}
@@ -48,7 +54,7 @@ class BuilderTests(unittest.TestCase):
                        "--torch-npu-version", "2.10.0.post4", "--materials-root", str(self.materials)]
 
     def run_cli(self, *args, expected=0, common=True):
-        result = subprocess.run(["/bin/bash", str(ROOT / "build-image.sh")]
+        result = subprocess.run([sys.executable, str(ROOT / "build.py")]
                                 + (self.common if common else []) + list(args),
                                 cwd=self.path, env=self.env, text=True, capture_output=True)
         self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
@@ -61,14 +67,14 @@ class BuilderTests(unittest.TestCase):
         return list((self.path / "build").glob("*/result.txt"))
 
     def simulation(self):
-        return ["--target", "simulation", "--camodel-dir", str(self.cam), "--camodel-archive", "model.zip"]
+        return ["--target", "simulation"]
 
     def test_help_and_unknown_tag(self):
         self.assertIn("--no-torch", self.run_cli("--help", common=False))
-        self.assertIn("Unknown argument: --tag", self.run_cli("--tag", "custom:test", expected=1))
+        self.assertIn("unrecognized arguments: --tag", self.run_cli("--tag", "custom:test", expected=2))
 
     def test_mutually_exclusive_modes(self):
-        self.run_cli("--check", "--dry-run", expected=1)
+        self.run_cli("--check", "--dry-run", expected=2)
         self.run_cli("--files-only", expected=1)
 
     def test_guidance_and_preview_need_no_files_or_docker(self):
@@ -121,15 +127,14 @@ class BuilderTests(unittest.TestCase):
 
     def test_no_torch_and_simulation_option_conflicts(self):
         self.run_cli("--no-torch", "--check", expected=1)
-        self.run_cli("--camodel-dir", str(self.cam), "--check", expected=1)
-        self.run_cli("--target", "simulation", "--check", expected=1)
+        self.run_cli("--camodel-env", "env.sh", "--check", expected=1)
 
-    def test_cann_only_and_legacy_layout(self):
-        legacy = self.path / "legacy/950/9.1.0"
-        shutil.copytree(self.cann, legacy)
+    def test_flat_layout_cann_only_and_removed_directory_options(self):
         output = self.run_cli("--soc", "950", "--cann-version", "9.1.0", "--no-torch",
-                              "--cann-root", str(self.path / "legacy"), "--check", common=False)
+                              "--materials-root", str(self.materials), "--check", common=False)
         self.assertIn("cann-only", self.image_from(output))
+        for flag in ("--cann-root", "--torch-root", "--camodel-dir"):
+            self.run_cli(flag, str(self.materials), "--check", expected=2)
 
     def test_identity_stability_and_material_changes(self):
         first = self.image_from(self.run_cli("--check"))
@@ -157,14 +162,14 @@ class BuilderTests(unittest.TestCase):
         self.assertEqual(npu, self.image_from(self.run_cli("--check")))
 
     def test_simulation_duplicate_and_missing_scripts(self):
-        self.run_cli(*self.simulation(), "--camodel-archive", "model.zip", "--check", expected=1)
+        self.run_cli(*self.simulation(), "--camodel-archive", MAIN, "--camodel-archive", MAIN, "--check", expected=1)
         self.run_cli(*self.simulation(), "--camodel-env", "missing.sh", "--check", expected=1)
 
     def test_host_rejects_traversal_and_bad_zip(self):
-        with zipfile.ZipFile(self.cam / "model.zip", "w") as package:
+        with zipfile.ZipFile(self.cam / MAIN, "w") as package:
             package.writestr("../escape", "bad")
         self.assertIn("Unsafe ZIP entry", self.run_cli(*self.simulation(), "--check", expected=1))
-        (self.cam / "model.zip").write_bytes(b"not zip")
+        (self.cam / MAIN).write_bytes(b"not zip")
         self.assertIn("Invalid ZIP", self.run_cli(*self.simulation(), "--check", expected=1))
 
     def test_wrong_base_architecture(self):
@@ -183,7 +188,7 @@ class BuilderTests(unittest.TestCase):
         context = Path(Path(self.env["MOCK_CONTEXT_FILE"]).read_text())
         self.assertFalse(context.exists())
         snapshot = Path(self.env["MOCK_SNAPSHOT"])
-        self.assertFalse((snapshot / "camodel/archives/model.zip").exists())
+        self.assertFalse((snapshot / f"camodel/archives/{MAIN}").exists())
         self.assertEqual((snapshot / "config/apt-packages.txt").read_text(), "vim\n")
         self.assertTrue((snapshot / "config/manifest.txt").exists())
         self.assertNotIn(str(self.path), (report / "manifest.txt").read_text())
@@ -196,22 +201,45 @@ class BuilderTests(unittest.TestCase):
         self.assertIn("cann-only", (self.reports()[0].parent / "image-ref.txt").read_text())
 
     def test_simulation_stages_only_selected_archives_in_order(self):
-        shutil.copyfile(self.cam / "model.zip", self.cam / "tools.zip")
-        shutil.copyfile(self.cam / "model.zip", self.cam / "unselected.zip")
+        shutil.copyfile(self.cam / MAIN, self.cam / "unselected.zip")
         (self.cam / "check.sh").write_text("true\n")
-        self.run_cli(*self.simulation(), "--camodel-archive", "tools.zip", "--camodel-check", "check.sh")
+        self.run_cli(*self.simulation(), "--camodel-archive", CONFIG, "--camodel-archive", MAIN,
+                     "--camodel-check", "check.sh")
         staged = Path(self.env["MOCK_SNAPSHOT"]) / "camodel"
-        self.assertEqual((staged / "archives.txt").read_text(), "model.zip\ntools.zip\n")
+        self.assertEqual((staged / "archives.txt").read_text().splitlines(), [CONFIG, MAIN])
         self.assertFalse((staged / "archives/unselected.zip").exists())
         manifest = (self.reports()[0].parent / "manifest.txt").read_text()
         self.assertIn("simulation_validation=passed-build-script", manifest)
         self.assertEqual(manifest.count("simulation_validation="), 1)
 
+    def test_simulation_discovers_pair_and_explicit_selection_overrides_discovery(self):
+        self.run_cli(*self.simulation())
+        staged = Path(self.env["MOCK_SNAPSHOT"]) / "camodel"
+        self.assertEqual((staged / "archives.txt").read_text().splitlines(), [MAIN, CONFIG])
+        other = MAIN.replace("123A1", "456B2")
+        shutil.copyfile(self.cam / MAIN, self.cam / other)
+        self.run_cli(*self.simulation(), "--check", expected=1)
+        self.run_cli(*self.simulation(), "--camodel-archive", MAIN, "--camodel-archive", CONFIG)
+        self.assertEqual((staged / "archives.txt").read_text().splitlines(), [MAIN, CONFIG])
+
+    def test_simulation_pair_must_match(self):
+        wrong = self.cam / CONFIG.replace("123A1", "456B2")
+        (self.cam / CONFIG).rename(wrong)
+        self.assertIn("do not match", self.run_cli(*self.simulation(), "--check", "--files-only", expected=1))
+        wrong.unlink()
+        self.assertIn("main/config pair", self.run_cli(*self.simulation(), "--check", "--files-only", expected=1))
+
+    def test_simulation_missing_packages_allow_guidance_only(self):
+        shutil.rmtree(self.cam)
+        self.assertIn("No *ESLMODEL*.zip", self.run_cli(*self.simulation(), "--check", "--files-only", expected=1))
+        self.assertIn("*ESLMODEL*.zip", self.run_cli(*self.simulation(), "--materials"))
+        self.assertIn("unresolved:", self.run_cli(*self.simulation(), "--dry-run"))
+
     def test_failed_build_and_report_copy_clean_up(self):
         for variable in ("MOCK_BUILD_FAIL", "MOCK_CP_FAIL"):
             with self.subTest(variable=variable):
                 self.env[variable] = "1"
-                self.run_cli(expected=1 if variable == "MOCK_BUILD_FAIL" else 24)
+                self.run_cli(expected=23 if variable == "MOCK_BUILD_FAIL" else 24)
                 context = Path(Path(self.env["MOCK_CONTEXT_FILE"]).read_text())
                 self.assertFalse(context.exists())
                 self.env.pop(variable)
@@ -230,37 +258,72 @@ class BuilderTests(unittest.TestCase):
         for report in self.reports():
             self.assertIn("phase=materials", report.read_text())
 
+    def test_sigterm_cleans_context_and_records_interruption(self):
+        self.env["MOCK_BUILD_WAIT"] = "1"
+        process = subprocess.Popen([sys.executable, str(ROOT / "build.py"), *self.common],
+                                   cwd=self.path, env=self.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            marker = Path(self.env["MOCK_CONTEXT_FILE"])
+            deadline = time.monotonic() + 10
+            while not marker.exists() and process.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertTrue(marker.exists(), "Build must reach the backend before interruption")
+            process.send_signal(signal.SIGTERM)
+            stdout, stderr = process.communicate(timeout=10)
+            self.assertEqual(process.returncode, 143, stdout + stderr)
+            self.assertFalse(Path(marker.read_text()).exists())
+            report = self.reports()[0].parent
+            self.assertIn("exit_code=143", (report / "result.txt").read_text())
+            self.assertFalse((report / "image-ref.txt").exists())
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate()
+
     def test_untrusted_argument_is_not_executed(self):
         marker = self.path / "injected"
         self.run_cli("--pip-package", f"$(touch {marker})", "--dry-run", expected=1)
         self.run_cli("--pip-index", "https://secret@example.com/simple", "--check", expected=1)
         self.assertFalse(marker.exists())
 
-    def test_archive_extractor_preserves_executables_and_rejects_symlinks(self):
-        source = (ROOT / "scripts/prepare-simulation.sh").read_text()
-        program = re.search(r"<<'PY'\n(.*?)\nPY", source, re.S).group(1)
+    def run_extractor(self, *archives, expected=0):
         inputs = self.path / "archive-input"
-        (inputs / "archives").mkdir(parents=True)
-        (inputs / "archives.txt").write_text("model.zip\n")
+        (inputs / "archives").mkdir(parents=True, exist_ok=True)
+        names = [f"ESLMODEL-{index}.zip" for index in range(len(archives))]
+        (inputs / "archives.txt").write_text("".join(name + "\n" for name in names))
         (inputs / "init.sh").write_text("true\n")
-        archive_path = inputs / "archives/model.zip"
+        for name, entries in zip(names, archives):
+            with zipfile.ZipFile(inputs / "archives" / name, "w") as archive:
+                for member, content in entries:
+                    archive.writestr(member, content)
+        home = self.path / "extracted"
+        home.mkdir(exist_ok=True)
+        result = subprocess.run([sys.executable, "-I", str(ROOT / "ascender/archives.py"), str(inputs), str(home)],
+                                text=True, capture_output=True)
+        self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+        return home
+
+    def test_archive_extractor_merges_two_packages_directly_and_preserves_executables(self):
         member = zipfile.ZipInfo("bin/tool")
         member.external_attr = (stat.S_IFREG | 0o755) << 16
-        with zipfile.ZipFile(archive_path, "w") as archive:
-            archive.writestr(member, "#!/bin/sh\ntrue\n")
-        home = self.path / "extracted"
-        home.mkdir()
-        subprocess.run([sys.executable, "-I", "-", str(inputs), str(home)], input=program, text=True, check=True)
-        self.assertTrue((home / "model/bin/tool").stat().st_mode & 0o111)
-        shutil.rmtree(home)
-        home.mkdir()
+        home = self.run_extractor([("bin/", ""), (member, "#!/bin/sh\ntrue\n")],
+                                  [("bin/", ""), ("bin/other-tool", "other tool"), ("lib/model.so", "model")])
+        self.assertTrue((home / "bin/tool").stat().st_mode & 0o111)
+        self.assertEqual((home / "bin/other-tool").read_text(), "other tool")
+        self.assertEqual((home / "lib/model.so").read_text(), "model")
+        self.assertEqual((home / "init.sh").read_text(), "true\n")
+        self.assertFalse((home / "ESLMODEL-0").exists())
+
+    def test_archive_extractor_rejects_file_overwrites_between_packages(self):
+        home = self.run_extractor([("lib/model.so", "original")],
+                                  [("lib/model.so", "replacement")], expected=1)
+        self.assertFalse((home / "lib/model.so").exists())
+
+    def test_archive_extractor_rejects_symlinks(self):
         member = zipfile.ZipInfo("link")
         member.external_attr = (stat.S_IFLNK | 0o777) << 16
-        with zipfile.ZipFile(archive_path, "w") as archive:
-            archive.writestr(member, "../../outside")
-        result = subprocess.run([sys.executable, "-I", "-", str(inputs), str(home)], input=program, text=True, capture_output=True)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertFalse((home / "model").exists())
+        home = self.run_extractor([(member, "../../outside")], expected=1)
+        self.assertEqual(list(home.iterdir()), [])
 
     def test_environment_loading_is_idempotent_and_restores_nounset(self):
         cann = self.path / "vendor-env.sh"

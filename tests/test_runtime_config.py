@@ -26,20 +26,17 @@ class RuntimeConfigTests(unittest.TestCase):
         mock = binary / "docker"
         mock.write_text(f"#!{sys.executable}\n" + (ROOT / "tests/docker_mock.py").read_text())
         mock.chmod(0o755)
-        mock_id = binary / "id"
-        mock_id.write_text('#!/bin/sh\ncase "$1" in -u) echo 1234 ;; -g) echo 2345 ;; *) exit 1 ;; esac\n')
-        mock_id.chmod(0o755)
         self.env = dict(os.environ, PATH=str(binary) + os.pathsep + os.environ["PATH"],
                         MOCK_LOG=str(self.path / "docker.log"), MOCK_TARGET="simulation",
                         LOCAL_UID="9999", LOCAL_GID="9999", LOCAL_USER="ambient",
                         ASCEND_IMAGE="wrong:image", IDENTITY_DIR="wrong-path", CODE_DIR="wrong-path")
-        for key in ("MOCK_CP_FAIL", "MOCK_PASSWD", "MOCK_GROUP"):
+        for key in ("MOCK_CP_FAIL", "MOCK_PASSWD", "MOCK_GROUP", "DOCKER_HOST"):
             self.env.pop(key, None)
 
     def run_prepare(self, *args, expected=0):
-        result = subprocess.run(["/bin/bash", str(ROOT / "examples/prepare-runtime.sh"),
+        result = subprocess.run([sys.executable, str(ROOT / "prepare_runtime.py"),
                                  "--image-ref-file", str(self.image_file), "--code-dir", str(self.code),
-                                 "--output-dir", str(self.output), *args],
+                                 "--output-dir", str(self.output), "--uid", "1234", "--gid", "2345", *args],
                                 env=self.env, text=True, capture_output=True)
         self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
         return result
@@ -47,7 +44,7 @@ class RuntimeConfigTests(unittest.TestCase):
     def config(self):
         return (self.output / "compose.yaml").read_text()
 
-    def test_default_simulation_has_complete_settings_without_environment(self):
+    def test_simulation_has_complete_settings_independent_of_environment(self):
         self.run_prepare()
         config = self.config()
         self.assertIn("image: 'ascend-dev:generated'", config)
@@ -64,7 +61,7 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertFalse((self.output / "identity/compose.env").exists())
         self.assertFalse(list(self.output.glob(".prepare-runtime.*")))
         calls = [json.loads(line) for line in Path(self.env["MOCK_LOG"]).read_text().splitlines()]
-        self.assertFalse(any(call[0] in ("run", "start", "exec", "pull") for call in calls))
+        self.assertFalse(any(any(item in ("run", "start", "exec", "pull") for item in call[:3]) for call in calls))
 
     def test_cli_identity_overrides_are_normalized(self):
         self.run_prepare("--uid", "001234", "--gid", "002345", "--user", "customuser")
@@ -91,17 +88,15 @@ class RuntimeConfigTests(unittest.TestCase):
         dcmi.mkdir()
         info = self.path / "ascend_install.info"
         info.write_text("fixture info")
-        mock_stat = self.path / "bin/stat"
-        mock_stat.write_text("#!/bin/sh\necho 77\n")
-        mock_stat.chmod(0o755)
         # Generic character devices exercise path/type checks without NPU hardware.
         self.run_prepare("--device", "/dev/null", "--device", "/dev/zero",
                          "--driver-root", str(driver), "--dcmi-dir", str(dcmi), "--install-info", str(info),
-                         "--group-add", "0077", "--group-add", "88")
+                         "--group-add", "0077", "--group-add", "77", "--group-add", "88")
         config = self.config()
         self.assertIn("'/dev/null:/dev/null'", config)
         self.assertEqual(config.count("      - '77'\n"), 1)
         self.assertEqual(config.count("      - '88'\n"), 1)
+        self.assertEqual(config.count(f"      - '{os.stat('/dev/null').st_gid}'\n"), 1)
         self.assertIn("source: '" + str(driver.resolve()) + "/lib64'", config)
         self.assertIn("target: '/usr/local/Ascend/driver/lib64'\n        read_only: true", config)
 

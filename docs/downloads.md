@@ -19,11 +19,11 @@ docker image inspect ubuntu:22.04
 
 | 材料 | 下载入口或参考直链 | 保存目录（相对材料根） |
 | --- | --- | --- |
-| `Ascend-cann-toolkit_9.1.0_linux-x86_64.run` | [Toolkit](https://ascend-repo.obs.cn-east-2.myhuaweicloud.com/CANN/CANN%209.1.0/Ascend-cann-toolkit_9.1.0_linux-x86_64.run) | `cann/9.1.0/linux-amd64/` |
+| `Ascend-cann-toolkit_9.1.0_linux-x86_64.run` | [Toolkit](https://ascend-repo.obs.cn-east-2.myhuaweicloud.com/CANN/CANN%209.1.0/Ascend-cann-toolkit_9.1.0_linux-x86_64.run) | `cann/` |
 | `Ascend-cann-950-ops_9.1.0_linux-x86_64.run` | [950 ops](https://ascend-repo.obs.cn-east-2.myhuaweicloud.com/CANN/CANN%209.1.0/Ascend-cann-950-ops_9.1.0_linux-x86_64.run) | 同上 |
-| `torch-2.10.0+cpu-cp310-cp310-manylinux_2_28_x86_64.whl` | [CPU wheel](https://download.pytorch.org/whl/cpu/torch-2.10.0%2Bcpu-cp310-cp310-manylinux_2_28_x86_64.whl) | `torch/2.10.0/cp310/linux-amd64/` |
+| `torch-2.10.0+cpu-cp310-cp310-manylinux_2_28_x86_64.whl` | [CPU wheel](https://download.pytorch.org/whl/cpu/torch-2.10.0%2Bcpu-cp310-cp310-manylinux_2_28_x86_64.whl) | `torch/` |
 | `torch_npu-2.10.0.post4-cp310-cp310-manylinux_2_28_x86_64.whl` | [torch-npu wheel](https://gitcode.com/Ascend/pytorch/releases/download/v26.1.0-pytorch2.10.0/torch_npu-2.10.0.post4-cp310-cp310-manylinux_2_28_x86_64.whl) | 同上 |
-| CAModel ZIP、`init.sh`、可选 `env.sh` / 自检脚本 | 从实际模型/仿真供应方获取，不推断公开地址 | 如 `camodel/950/9.1.0/` |
+| CAModel 主包与 `_config.zip` 配置包、`init.sh`、可选 `env.sh` / 自检脚本 | 从实际模型/仿真供应方获取，不推断公开地址 | `camodel/` |
 
 官方入口：[CANN](https://www.hiascend.com/developer/download/community/result?module=cann)、[PyTorch CPU wheels](https://download.pytorch.org/whl/cpu/torch/)、[torch-npu releases](https://gitcode.com/Ascend/pytorch/releases)。有官方校验和时应在准备材料时核对；本工具记录的是本地 SHA-256 指纹，不将其标为上游来源验证。
 
@@ -40,23 +40,15 @@ SoC 型号由 ops 包和实际设备确定。`950` 是参考示例；接受其�
 
 ## 仿真脚本契约
 
-- 每个 ZIP 解压到 `/opt/CAModel/<原文件名去掉.zip>/`，可执行文件的执行位会保留；不接受目录穿越、绝对路径或 ZIP 内符号链接。
+- 将 `x86_64_ESLMODEL_Ascend950DT_123A1.zip` 与 `x86_64_ESLMODEL_Ascend950DT_123A1_config.zip` 保持原名放到 `ROOT/camodel/`。默认按文件名顺序查找 `*ESLMODEL*.zip`，要求一对同名主包/配置包；不递归、不选其他 ZIP。多套材料时使用两次 `--camodel-archive FILE` 明确选定一对，按参数顺序处理。型号和版本以实际供应方文件名为准，不从 CANN 版本推导。
+- 所有 ZIP 内容直接解压到 `/opt/CAModel/`，保留包内目录，不另建包名目录。例如包内 `lib/model.so` 对应 `/opt/CAModel/lib/model.so`。跨包同名目录可合并，同名文件报错；可执行文件的执行位会保留；不接受目录穿越、绝对路径或 ZIP 内符号链接。
 - `init.sh` 的工作目录为 `/opt/CAModel`，已加载 CANN，`CAMODEL_HOME=/opt/CAModel`。负责本地目录整理、链接或其他安装步骤，不应在其中补做下载。
 - `env.sh` 设置运行期变量和搜索路径；可能被加载到用户 Bash 中，应适合重复进入，不执行安装、不依赖 root、不固定写 `/root`。
 - 可选自检脚本检查该 CAModel 的最小运行任务，不以 `torch.npu.is_available()` 作为仿真判据。
 - 需要非 root 运行时，将日志/缓存/输出指向用户可写目录。特殊安装树写入需求需针对实际 CAModel 配置，不能通过将整个安装目录改为任意用户可写解决。
 
-## 已有材料目录
+## 目录约定
 
-旧布局 `cann-run/950/9.1.0/` 与 `cann-run/torch/2.10.0/` 可继续使用：
+每个 `--materials-root` 对应一套配套材料，固定使用 `cann/`、`torch/`、`camodel/` 三个直接子目录。旧的版本/架构嵌套布局及目录参数已移除，完整目录树见 [README](../README.md#材料目录)。
 
-```bash
-bash build-image.sh \
-  --soc 950 --cann-version 9.1.0 \
-  --torch-version 2.10.0+cpu --torch-npu-version 2.10.0.post4 \
-  --cann-root /home/user/cann-run \
-  --torch-root /home/user/cann-run/torch \
-  --check --files-only
-```
-
-任意其他布局可用精确文件参数，不需要重命名或移动原文件；原始文件名仍须包含正确的版本、SoC 和平台信息。
+通用精确文件参数可指向其他本地路径；文件名仍须包含正确的版本、SoC 和平台信息。仿真文件参数的相对路径均以 `ROOT/camodel/` 为基准。

@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import sys
 
 args = sys.argv[1:]
@@ -33,6 +34,8 @@ elif args[:2] == ["buildx", "build"]:
     snapshot = Path(os.environ["MOCK_SNAPSHOT"])
     shutil.copytree(context, snapshot, dirs_exist_ok=True)
     Path(os.environ["MOCK_CONTEXT_FILE"]).write_text(str(context))
+    if os.environ.get("MOCK_BUILD_WAIT"):
+        signal.pause()
     if os.environ.get("MOCK_BUILD_FAIL"):
         print("simulated Docker build failure", file=sys.stderr)
         sys.exit(23)
