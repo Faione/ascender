@@ -1,8 +1,11 @@
 """Module boundary checks: archive safety, immutable staging and backend replacement."""
 from contextlib import contextmanager
+import importlib.util
 from pathlib import Path
+import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 import zipfile
 
 from ascender import archives, context
@@ -18,6 +21,20 @@ class ModuleTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.path = Path(self.temp.name)
+
+    def test_container_annotations_are_not_evaluated_during_import(self):
+        # Model Python <=3.8's built-in list/dict types, which do not implement
+        # __class_getitem__. Both host entry points must survive module import.
+        legacy_container = type("LegacyContainer", (), {})
+        root = Path(__file__).resolve().parents[1]
+        for name, builtin in (("image", "list"), ("accounts", "dict")):
+            with self.subTest(module=name):
+                module_name = f"ascender._compat_{name}"
+                spec = importlib.util.spec_from_file_location(module_name, root / "ascender" / f"{name}.py")
+                module = importlib.util.module_from_spec(spec)
+                setattr(module, builtin, legacy_container)
+                with patch.dict(sys.modules, {module_name: module}):
+                    spec.loader.exec_module(module)
 
     def test_staging_rejects_inputs_changed_after_validation(self):
         source = self.path / "installer.run"

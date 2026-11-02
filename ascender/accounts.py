@@ -1,4 +1,6 @@
 """Prepare container account copies; never read or modify host account databases."""
+from __future__ import annotations
+
 from dataclasses import dataclass
 import os
 from pathlib import Path
