@@ -30,9 +30,13 @@ def build_options(argv=None):
         local.add_argument(f"--{flag}", default="", help="Exact file path; overrides directory lookup")
     simulation = parser.add_argument_group("simulation inputs: paths relative to ROOT/camodel unless absolute")
     simulation.add_argument("--camodel-archive", action="append", default=[], help="Select ZIP; repeat for main/config pair (default: *ESLMODEL*.zip)")
-    simulation.add_argument("--camodel-init", default="", help="Default: required init.sh")
+    simulation.add_argument("--camodel-init", default="", help="Optional extra initialization after built-in setup; default: use init.sh if present")
     simulation.add_argument("--camodel-env", default="", help="Default: optional env.sh")
     simulation.add_argument("--camodel-check", default="", help="Optional build-time simulation smoke test")
+    simulation.add_argument("--esl-soc-version", default=os.environ.get("ASCEND_DEV_ESL_SOC_VERSION") or "", help="ESL_SOC_VERSION (default: 0x1000)")
+    simulation.add_argument("--simulator-soc-version", default="", help="CANN simulator subdirectory; default: resolved --soc, allowing Ascend prefix")
+    simulation.add_argument("--cann-install-dir", default="", help="Container CANN installation root; default: active CANN environment/standard paths")
+    simulation.add_argument("--camodel-lib-dir", default="", help="Library directory inside /opt/CAModel; default: locate unique libnpu_drv_camodel.so")
     adjust = parser.add_argument_group("build adjustments")
     for flag, default, help_text in (
             ("apt-mirror", "", "Ubuntu repository base URL"), ("pip-index", "https://pypi.org/simple", "Global pip source"),

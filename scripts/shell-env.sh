@@ -16,5 +16,7 @@ if [[ "${_ASCEND_CANN_ENV_LOADED:-}" != 1 ]]; then
 fi
 if [[ "${ASCEND_ENV_MODE:-npu}" == simulation && "${_ASCEND_SIM_ENV_LOADED:-}" != 1 ]]; then
     if [[ -f "${CAMODEL_HOME:?}/env.sh" ]]; then _ascend_source_env "$CAMODEL_HOME/env.sh" || return $?; fi
+    # Apply built-in settings last, keeping the CAModel library directory first.
+    if [[ -f /etc/ascend/camodel-env.sh ]]; then _ascend_source_env /etc/ascend/camodel-env.sh || return $?; fi
     export _ASCEND_SIM_ENV_LOADED=1
 fi

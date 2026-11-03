@@ -16,7 +16,10 @@ def show_plan(config, selected):
             print(f"CAModel archives: {path}")
         if not selected.archives:
             print(f"CAModel archives: unresolved: {config.materials_root.absolute()}/camodel/*ESLMODEL*.zip")
-        print(f"CAModel init: {selected.init}\nCAModel env: {selected.env or 'none'}\nCAModel check: {selected.check or 'none (simulation unverified)'}")
+        print(f"CAModel init: built-in library replacement/symlinks/set_env.sh\nExtra init: {selected.init or 'none'}")
+        print(f"CANN root: {config.cann_install_dir or 'active environment/standard paths'} | simulator SoC: {config.simulator_soc_version or config.soc}")
+        print(f"CAModel library dir: {config.camodel_lib_dir or 'auto: libnpu_drv_camodel.so'} | ESL_SOC_VERSION: {config.esl_soc_version}")
+        print(f"CAModel env: {selected.env or 'none'}\nCAModel check: {selected.check or 'none (simulation unverified)'}")
     print(f"Workdir: {config.workdir} | APT mirror: {config.apt_mirror or 'base default'} | pip index: {config.pip_index}")
     print(f"Network: {config.network} | progress: {config.progress} | no-cache: {config.no_cache} | output: {config.output_dir}")
     for name, values in (("Extra APT", config.apt_package), ("Extra pip", config.pip_package)):
@@ -32,7 +35,7 @@ def materials_help(config, selected):
     print("CANN Toolkit/ops: https://www.hiascend.com/developer/download/community/result?module=cann")
     print("PyTorch CPU wheel index: https://download.pytorch.org/whl/cpu/torch/")
     print("torch-npu releases: https://gitcode.com/Ascend/pytorch/releases")
-    print("CAModel: obtain the matching x86_64_ESLMODEL_*.zip / *_config.zip pair and local scripts from your provider.")
+    print("CAModel: obtain the matching x86_64_ESLMODEL_*.zip / *_config.zip pair; library initialization is built in. Extra scripts are optional.")
     print("Storage: ROOT/cann/, ROOT/torch/, ROOT/camodel/. Details: docs/downloads.md")
 
 

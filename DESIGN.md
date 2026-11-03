@@ -19,6 +19,7 @@
 | `materials.py` | 固定目录定位、精确文件选择、材料校验和清单 | 目录布局或包名规则变化 |
 | `chips.py` | 将 SoC 具体型号或数字系列解析为唯一 ops 安装包 | 型号匹配策略变化 |
 | `wheels.py` | 将 Torch/NPU 完整或基础版本解析为唯一的兼容 wheel | wheel 文件名、版本匹配策略变化 |
+| `simulation.py` | 镜像内替换 CAModel 运行库、建立链接并生成环境脚本 | 仿真初始化步骤变化；独立标准库模块 |
 | `archives.py` | ZIP 安全校验及解压 | 压缩包格式处理变化；宿主机/容器共用 |
 | `image.py` | 根据参数、输入哈希、基础镜像 ID 计算镜像身份 | 自动 tag 或指纹规则变化 |
 | `context.py` | 临时构建上下文和复制后哈希校验 | 材料传入 Docker 的方式变化 |
@@ -32,7 +33,7 @@
 
 依赖方向：入口 → CLI → 工作流 → 专项模块。专项模块不导入 CLI 或工作流；`compose` 不访问 Docker/磁盘，`image` 不执行命令，`accounts` 不读取宿主机账号库。构建/运行工作流通过 `backend` 工厂接收 Docker 适配器，便于替换及独立测试；不引入插件注册器、泛化框架或第三方 SDK。
 
-ZIP 模块仅依赖标准库，构建时按 `scripts/archives.py` 暂存到上下文，通过现有 Dockerfile 的脚本 COPY 进入镜像。宿主机材料检查与容器解压使用同一份实现，源码参与输入指纹。
+ZIP 与初始化模块仅依赖标准库，构建时按 `scripts/archives.py`、`scripts/simulation.py` 暂存到上下文，通过现有 Dockerfile 的脚本 COPY 进入镜像。宿主机材料检查与容器解压使用同一份实现，源码参与输入指纹。
 
 ## 输入契约
 
@@ -42,7 +43,7 @@ ZIP 模块仅依赖标准库，构建时按 `scripts/archives.py` 暂存到上�
 ROOT/
 ├── cann/       # Toolkit 和匹配 SoC 的 ops .run
 ├── torch/      # 精确版本、cp310、x86_64 的两份 wheels
-└── camodel/    # 主包、_config.zip、init.sh、可选 env.sh/check.sh
+└── camodel/    # 主包、_config.zip、可选 init.sh/env.sh/check.sh
 ```
 
 每个根目录保存一套材料，不额外嵌套版本、SoC 或架构。不同组合选择不同根目录。移除旧布局和 `--cann-root`、`--torch-root`、`--camodel-dir`，不读取旧的 CAModel 目录环境变量。不递归、不逐级回退；精确文件参数覆盖对应默认查找路径。
@@ -59,7 +60,11 @@ Torch/NPU 在 cp310/x86_64 wheel 中先精确匹配；没有精确候选时，�
 
 ZIP 预检所有包的 CRC、路径、类型及合并后的命名空间；允许共享目录，拒绝重复文件、文件/目录冲突、符号链接和路径穿越。所有包直接解压到 `/opt/CAModel/`，保留包内层级及文件执行位，不套包名目录。
 
-`init.sh` 必需，在已加载 CANN 的 `/opt/CAModel` 下执行。`env.sh` 可选，由入口和 Bash 加载；`check.sh` 必须显式启用。初始化/自检不应下载内容，变量持久化写入 env.sh。脚本作为用户提供的受信任代码在镜像构建中执行。
+内置 simulation 模块在镜像内查找 CANN `x86_64-linux/simulator/<soc_version>/lib/libruntime_camodel.so`，默认使用活动 CANN 安装目录及解析后的 SoC（允许 Ascend 前缀别名）。通过唯一的 `libnpu_drv_camodel.so` 定位 CAModel 库目录，复制替换运行库、创建两个相对软链接，并在同一目录生成 set_env.sh。路径不唯一或缺失立即报错；目录和型号可显式配置。
+
+set_env.sh 固定 ASCEND_DEVICE_ID=0、ESL_HARDWARE_VERSION=0x1000，ESL_SOC_VERSION 默认为用户确认的 0x1000，可从 CLI/环境配置覆盖；库目录置于 LD_LIBRARY_PATH 首位且重复加载去重。生成的 /etc/ascend/camodel-env.sh 指向该脚本，由公共环境入口在可选 env.sh 之后加载。初始化设置写入只读输入 settings.json，参与 manifest 和镜像指纹，宿主机不读取镜像内路径。
+
+外部 `init.sh` 改为可选扩展，在内置初始化后、已加载 CANN/仿真环境的 `/opt/CAModel` 下执行。不根据 ZIP 中同名脚本自动执行初始化。`env.sh` 可选，`check.sh` 必须显式启用。扩展/自检不下载内容，作为用户提供的受信任代码在构建中执行。
 
 ## 构建流程与资源
 

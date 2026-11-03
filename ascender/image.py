@@ -24,6 +24,8 @@ def identify(config: BuildConfig, selected: Materials, inputs: list[Input], base
         "no_torch": int(config.no_torch), "base_id": base_id, "apt_mirror": config.apt_mirror,
         "pip_index": config.pip_index, "workdir": config.workdir,
     }
+    if config.target == "simulation":
+        parameters.update(config.simulation_settings)
     settings = "".join(f"{key}={value}\n" for key, value in parameters.items())
     for key, values in (("apt", config.apt_package), ("pip", config.pip_package),
                         ("archive", [path.name for path in selected.archives])):

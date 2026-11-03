@@ -6,18 +6,18 @@
 
 ## Quick Start
 
-以下以构建 Ascend 950 的 `simulation` 目标为例。在装有 Python 3.9+、Docker 和 Buildx 的机器上，进入本项目目录执行，无需 `pip install`。
+以下以构建 Ascend950DT 的 `simulation` 目标为例。在装有 Python 3.9+、Docker 和 Buildx 的机器上，进入本项目目录执行，无需 `pip install`。
 
 **1. 准备材料和基础镜像。** 下载并按原名保存到以下目录，具体文件名及下载入口见[材料目录](#材料目录)和[下载说明](docs/downloads.md)：
 
 ```text
 /data/ascend-materials/
-├── cann/       # CANN 9.1.0 Toolkit、950 ops 的 .run 文件
+├── cann/       # CANN 9.1.0 Toolkit、950dt ops 的 .run 文件
 ├── torch/      # Torch 2.10.0+cpu、torch-npu 2.10.0.post4 的 cp310/x86_64 wheels
-└── camodel/    # ESLMODEL 主包、同名 _config.zip、init.sh；可选 env.sh/check.sh
+└── camodel/    # ESLMODEL 主包、同名 _config.zip；可选 init.sh/env.sh/check.sh
 ```
 
-仿真包例如 `x86_64_ESLMODEL_Ascend950DT_123A1.zip` 及 `x86_64_ESLMODEL_Ascend950DT_123A1_config.zip`。无需提前解压；`init.sh` 按供应方要求准备，运行期环境变量放入可选的 `env.sh`。
+仿真包例如 `x86_64_ESLMODEL_Ascend950DT_123A1.zip` 及 `x86_64_ESLMODEL_Ascend950DT_123A1_config.zip`。无需提前解压或提供初始化脚本；工具内置运行库替换、软链接及 `set_env.sh` 生成。`ESL_SOC_VERSION` 默认采用 `0x1000`，可通过 `--esl-soc-version` 覆盖。
 
 ```bash
 docker pull --platform linux/amd64 ubuntu:22.04
@@ -27,9 +27,11 @@ docker pull --platform linux/amd64 ubuntu:22.04
 
 ```bash
 python3 build.py \
-  --target simulation --soc 950 --cann-version 9.1.0 \
+  --target simulation --soc 950dt --cann-version 9.1.0 \
   --torch-version 2.10.0 --torch-npu-version 2.10.0 \
   --materials-root /data/ascend-materials \
+  --esl-soc-version 0x1000 \
+  --simulator-soc-version Ascend950DT \
   --camodel-archive x86_64_ESLMODEL_Ascend950DT_123A1.zip \
   --camodel-archive x86_64_ESLMODEL_Ascend950DT_123A1_config.zip
 ```
@@ -49,7 +51,7 @@ SoC 同样先精确匹配。若没有 `950` 的 ops 包且只有 `950dt` 或 `95
 
 显式指定后只使用这两个包，忽略目录内其他 ZIP。省略全部 `--camodel-archive` 时自动查找 `camodel/*ESLMODEL*.zip`，该目录必须只有一套主包/配置包。包内容变化会影响自动生成的镜像 tag。
 
-若不同 CAModel 需要独立脚本，可同时指定 `--camodel-init /data/models/456B2/init.sh`、`--camodel-env /data/models/456B2/env.sh` 和可选的 `--camodel-check /data/models/456B2/check.sh`。脚本默认仍从材料根目录的 `camodel/` 读取，不会随 ZIP 的绝对路径自动切换；只有实际提供了相应文件才添加这些选项。
+切换 CAModel 时同时核对 `--soc`、`--simulator-soc-version` 和 `--esl-soc-version` 是否适用于新包。仅有额外定制需求时再添加 `--camodel-init /data/models/456B2/init.sh`、`--camodel-env /data/models/456B2/env.sh` 或 `--camodel-check /data/models/456B2/check.sh`。这些都是可选文件，默认从材料根目录的 `camodel/` 读取，不会随 ZIP 的绝对路径自动切换。
 
 构建和运行 simulation 环境均无需 NPU 设备。NPU 目标的独立构建命令见[构建](#构建)。
 
@@ -87,14 +89,14 @@ docker compose -f /data/ascend-runtime/compose.yaml exec ascend bash
 /data/ascend-materials/
 ├── cann/
 │   ├── Ascend-cann-toolkit_9.1.0_linux-x86_64.run
-│   └── Ascend-cann-950-ops_9.1.0_linux-x86_64.run
+│   └── Ascend-cann-950dt-ops_9.1.0_linux-x86_64.run
 ├── torch/                          # --no-torch 时不需要
 │   ├── torch-2.10.0+cpu-cp310-cp310-manylinux_2_28_x86_64.whl
 │   └── torch_npu-2.10.0.post4-cp310-cp310-manylinux_2_28_x86_64.whl
 └── camodel/                        # 仅仿真目标读取
     ├── x86_64_ESLMODEL_Ascend950DT_123A1.zip
     ├── x86_64_ESLMODEL_Ascend950DT_123A1_config.zip
-    ├── init.sh                     # 必需：构建期初始化
+    ├── init.sh                     # 可选：内置初始化后的额外操作
     ├── env.sh                      # 可选：运行期环境
     └── check.sh                    # 可选：显式启用的仿真自检
 ```
@@ -118,9 +120,11 @@ python3 build.py \
 
 ```bash
 python3 build.py \
-  --target simulation --soc 950 --cann-version 9.1.0 \
+  --target simulation --soc 950dt --cann-version 9.1.0 \
   --torch-version 2.10.0+cpu --torch-npu-version 2.10.0.post4 \
   --materials-root /data/ascend-materials \
+  --esl-soc-version 0x1000 \
+  --simulator-soc-version Ascend950DT \
   --camodel-check check.sh
 ```
 
@@ -133,7 +137,42 @@ python3 prepare_runtime.py --help
 
 仿真自动选择 `camodel/` 当前目录下的 `*ESLMODEL*.zip`，要求一对同名主包和 `_config.zip` 配置包。多个版本共存时必须通过重复的 `--camodel-archive FILE` 选定一对；文件名中的 `123A1` 不从 CANN 版本推导，也不推断它与 SoC 的兼容关系。
 
-所有 ZIP 内容直接解压到 `/opt/CAModel/`，保留内部层级，不添加包名目录。同名目录合并，重复文件报错，保留可执行位；拒绝符号链接、路径穿越和文件/目录冲突。随后加载 CANN、在 `/opt/CAModel` 下执行 `init.sh`，再加载可选 `env.sh`、运行显式指定的 `check.sh`。供应方脚本应消费已准备的本地材料，不下载内容；运行期变量应写入 `env.sh`。
+所有 ZIP 内容直接解压到 `/opt/CAModel/`，保留内部层级，不添加包名目录。同名目录合并，重复文件报错，保留可执行位；拒绝符号链接、路径穿越和文件/目录冲突。随后执行内置初始化，再运行可选的额外 `init.sh` 和显式指定的 `check.sh`。供应方扩展脚本只消费本地材料，不下载内容；额外运行期变量可放入 `env.sh`。
+
+## CAModel 内置初始化
+
+工具在镜像内自动完成以下操作，无需用户编写 `init.sh`：
+
+1. 从 CANN 安装目录的 `x86_64-linux/simulator/<soc_version>/lib/libruntime_camodel.so` 复制运行库，替换 CAModel 库目录中的同名文件。
+2. 在该库目录创建相对软链接 `libruntime.so -> libruntime_camodel.so`、`libascend_hal.so -> libnpu_drv_camodel.so`，替换已有同名文件或链接。
+3. 在同一目录生成 `set_env.sh`，设置 `ASCEND_DEVICE_ID=0`、`ESL_HARDWARE_VERSION=0x1000`、`ESL_SOC_VERSION`，并将 CAModel 库目录放到 `LD_LIBRARY_PATH` 首位；重复加载不会重复追加该目录。
+4. 镜像入口和普通 Bash 自动加载生成的脚本。可选 `env.sh` 先加载，内置设置最后加载，保证 CAModel 库目录优先。
+
+| 参数 | 默认行为 |
+| --- | --- |
+| `--esl-soc-version VALUE` | `0x1000`；也可用 `ASCEND_DEV_ESL_SOC_VERSION` 设置，CLI 优先 |
+| `--simulator-soc-version NAME` | 使用解析后的 `--soc`，匹配目录时忽略大小写并兼容 `Ascend` 前缀，如 `950dt` 对应 `Ascend950DT` |
+| `--cann-install-dir DIR` | **镜像内** CANN 安装根目录；默认使用已加载的 `ASCEND_HOME_PATH` / `ASCEND_TOOLKIT_HOME`，未设置时检查标准安装位置 |
+| `--camodel-lib-dir DIR` | 默认在 `/opt/CAModel` 下查找唯一包含 `libnpu_drv_camodel.so` 的目录；相对路径以 `/opt/CAModel` 为基准，绝对路径也必须位于其中 |
+
+例如需要显式指定镜像内 CANN 路径及 ZIP 内库目录时，可使用以下完整构建命令：
+
+```bash
+python3 build.py \
+  --target simulation --soc 950dt --cann-version 9.1.0 \
+  --torch-version 2.10.0 --torch-npu-version 2.10.0 \
+  --materials-root /data/ascend-materials \
+  --esl-soc-version 0x1000 \
+  --simulator-soc-version Ascend950DT \
+  --cann-install-dir /usr/local/Ascend/cann \
+  --camodel-lib-dir x86_64_ESLMODEL_Ascend950DT_123A1/lib \
+  --camodel-archive x86_64_ESLMODEL_Ascend950DT_123A1.zip \
+  --camodel-archive x86_64_ESLMODEL_Ascend950DT_123A1_config.zip
+```
+
+以上目录按实际安装及包内布局调整。缺少运行库、缺少驱动库或存在多个候选目录时，构建会显示期望路径或候选列表并停止。`--check --files-only` 只校验宿主机材料，CANN 安装后的运行库和解压后的库目录在镜像构建时检查。
+
+`init.sh` 现在是可选扩展脚本：默认使用材料目录中存在的 `camodel/init.sh`，也可通过 `--camodel-init FILE` 指定；在内置初始化后、`/opt/CAModel` 下执行，已加载生成的仿真环境。未选择外部脚本时不会自动执行 ZIP 自带的 `init.sh`。脚本 `export` 不会持久化到父进程；需要长期生效的额外变量写入 `env.sh`。
 
 ## 预览和检查
 
@@ -165,7 +204,7 @@ python3 prepare_runtime.py --help
 - `--post-install` 指定公共安装阶段执行的 Bash 脚本，先于 CAModel 初始化；执行后重新校验核心版本。
 - `--network none` 仅禁用 RUN 网络，当前不是完整离线安装方案。`--no-cache` 不删除全局缓存。
 
-支持的环境变量为 `ASCEND_DEV_TARGET`、`ASCEND_DEV_SOC`、`ASCEND_DEV_CANN_VERSION`、`ASCEND_DEV_TORCH_VERSION`、`ASCEND_DEV_TORCH_NPU_VERSION`、`ASCEND_DEV_BASE_IMAGE`、`ASCEND_DEV_MATERIALS_ROOT`。无 tag 配置变量。运行配置工具不依赖这些变量。
+支持的环境变量为 `ASCEND_DEV_TARGET`、`ASCEND_DEV_SOC`、`ASCEND_DEV_CANN_VERSION`、`ASCEND_DEV_TORCH_VERSION`、`ASCEND_DEV_TORCH_NPU_VERSION`、`ASCEND_DEV_BASE_IMAGE`、`ASCEND_DEV_MATERIALS_ROOT`、`ASCEND_DEV_ESL_SOC_VERSION`（仅仿真）。无 tag 配置变量。运行配置工具不依赖这些变量。
 
 ## 版本配套提示
 
@@ -204,7 +243,7 @@ ascend-dev:npu-cann9.1.0-950-torch2.10.0_cpu-npu2.10.0.post4-py310-amd64-<HASH12
 ascend-sim:sim-cann9.1.0-950-torch2.10.0_cpu-npu2.10.0.post4-py310-amd64-<HASH12>
 ```
 
-没有 `--tag` 或 `latest` 别名。参数、材料、容器脚本、共享 ZIP 模块和基础镜像 ID 参与指纹。材料绝对路径、报告目录、缓存和显示选项不影响命名；相同基础镜像 ID 的引用别名得到同一个 tag。在线依赖源会变化，指纹不保证镜像逐字节可复现。
+没有 `--tag` 或 `latest` 别名。参数（含仿真初始化设置）、材料、容器脚本、共享 ZIP/初始化模块和基础镜像 ID 参与指纹。材料绝对路径、报告目录、缓存和显示选项不影响命名；相同基础镜像 ID 的引用别名得到同一个 tag。在线依赖源会变化，指纹不保证镜像逐字节可复现。
 
 实际构建输出到 `build/<build-id>/`，可用 `--output-dir` 修改父目录：
 

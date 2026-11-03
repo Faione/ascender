@@ -70,7 +70,8 @@ def resolve(config: BuildConfig) -> Materials:
         directory = root / "camodel"
         selected.archives = ([(directory / name).absolute() for name in config.camodel_archive]
                              if config.camodel_archive else sorted(path for path in directory.glob("*ESLMODEL*.zip") if path.is_file()))
-        selected.init = directory / (config.camodel_init or "init.sh")
+        selected.init = directory / config.camodel_init if config.camodel_init else (
+            directory / "init.sh" if (directory / "init.sh").is_file() else None)
         selected.env = directory / config.camodel_env if config.camodel_env else (
             directory / "env.sh" if (directory / "env.sh").is_file() else None)
         selected.check = directory / config.camodel_check if config.camodel_check else None
@@ -150,4 +151,5 @@ def collect(config: BuildConfig, selected: Materials) -> list[Input]:
     for path in sorted((PROJECT / "scripts").glob("*.sh")):
         add(path, f"scripts/{path.name}")
     add(PROJECT / "ascender/archives.py", "scripts/archives.py")
+    add(PROJECT / "ascender/simulation.py", "scripts/simulation.py")
     return result

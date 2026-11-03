@@ -95,6 +95,16 @@ docker compose -f /data/ascend-runtime/compose.yaml up -d --force-recreate
 
 镜像入口负责加载 CANN 和仿真环境。不要通过 Compose 覆盖 `entrypoint`；直接 `docker exec ... python3 ...` 时可使用 `/usr/local/bin/ascend-entrypoint` 包装。CAModel 日志、缓存和输出应写 HOME、项目输出目录或 `/tmp`；有安装树写入要求时需为具体子目录配置权限。
 
+仿真镜像已经完成运行库替换、软链接及 `set_env.sh` 生成，进入 Bash 会自动加载，无需再执行 `init.sh`。可以检查默认环境及库搜索顺序：
+
+```bash
+docker compose -f /data/ascend-runtime/compose.yaml exec ascend bash -lc \
+  'printf "ASCEND_DEVICE_ID=%s\nESL_HARDWARE_VERSION=%s\nESL_SOC_VERSION=%s\nLD_LIBRARY_PATH=%s\n" \
+    "$ASCEND_DEVICE_ID" "$ESL_HARDWARE_VERSION" "$ESL_SOC_VERSION" "$LD_LIBRARY_PATH"'
+```
+
+默认前三项为 `0`、`0x1000`、`0x1000`，`LD_LIBRARY_PATH` 第一项应为实际 CAModel 库目录。`ESL_SOC_VERSION` 以构建时的 `--esl-soc-version` 为准；修改初始化参数后需重建镜像，再使用新报告中的 `image-ref.txt` 重新生成配置并重建容器。
+
 生成器要求本地 Docker context，挂载路径必须存在于本机。NFS、ACL、SELinux、rootless/userns-remap 的权限映射需按实际情况检查。[用户命名空间说明](https://docs.docker.com/engine/security/userns-remap/)
 
 旧 Bash 入口和 `compose.env` 接口已移除，账号准备通过 Python 模块完成。生成器无需安装第三方 Python 包；需要 Python 3.9+ 和可访问的本地 Docker。

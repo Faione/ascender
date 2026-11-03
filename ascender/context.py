@@ -1,6 +1,7 @@
 """Create a disposable build context from validated input snapshots."""
 from contextlib import contextmanager
 from pathlib import Path
+import json
 import shutil
 import tempfile
 
@@ -23,6 +24,8 @@ def stage(config, selected, inputs, image, manifest):
             (root / "config" / name).write_text("".join(value + "\n" for value in values))
         (root / "config/constraints.txt").touch()
         (root / "camodel/archives.txt").write_text("".join(path.name + "\n" for path in selected.archives))
+        if config.target == "simulation":
+            (root / "camodel/settings.json").write_text(json.dumps(config.simulation_settings, indent=2) + "\n")
         (root / "config/manifest.txt").write_text(manifest)
         (root / "config/materials.sha256").write_text(image.hashes)
         yield root

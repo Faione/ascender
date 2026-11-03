@@ -41,6 +41,10 @@ class BuildConfig:
     camodel_init: str = ""
     camodel_env: str = ""
     camodel_check: str = ""
+    esl_soc_version: str = ""
+    simulator_soc_version: str = ""
+    cann_install_dir: str = ""
+    camodel_lib_dir: str = ""
     apt_mirror: str = ""
     pip_index: str = "https://pypi.org/simple"
     apt_package: list[str] = field(default_factory=list)
@@ -54,6 +58,12 @@ class BuildConfig:
     output_dir: Path = Path("build")
     mode: str = "build"
     files_only: bool = False
+
+    @property
+    def simulation_settings(self):
+        return {"soc": self.soc, "esl_soc_version": self.esl_soc_version,
+                "simulator_soc_version": self.simulator_soc_version, "cann_install_dir": self.cann_install_dir,
+                "camodel_lib_dir": self.camodel_lib_dir}
 
     @property
     def reference_versions(self):
@@ -103,8 +113,17 @@ class BuildConfig:
         for package in self.pip_package:
             require(bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*(\[[A-Za-z0-9_,.-]+\])?([<>=!~][A-Za-z0-9_.+*,<>=!~-]+)?", package)),
                     f"Invalid pip requirement: {package} (use name[extras] and version constraints).")
-        if self.target != "simulation":
-            require(not any((self.camodel_archive, self.camodel_init, self.camodel_env, self.camodel_check)),
+        if self.target == "simulation":
+            self.esl_soc_version = self.esl_soc_version or "0x1000"
+            require(bool(re.fullmatch(r"[A-Za-z0-9_.-]+", self.esl_soc_version)), "Invalid --esl-soc-version; use a value without whitespace or shell syntax.")
+            require(not self.simulator_soc_version or bool(re.fullmatch(r"[A-Za-z0-9_.-]+", self.simulator_soc_version)),
+                    "--simulator-soc-version must name one simulator subdirectory.")
+            require(not self.cann_install_dir or self.cann_install_dir.startswith("/"), "--cann-install-dir must be an absolute container path.")
+            require(".." not in PurePosixPath(self.camodel_lib_dir).parts and ":" not in self.camodel_lib_dir,
+                    "--camodel-lib-dir cannot contain parent traversal or colons.")
+        else:
+            require(not any((self.camodel_archive, self.camodel_init, self.camodel_env, self.camodel_check,
+                             self.esl_soc_version, self.simulator_soc_version, self.cann_install_dir, self.camodel_lib_dir)),
                     "CAModel options require --target simulation.")
 
     def validate_compatibility(self) -> None:

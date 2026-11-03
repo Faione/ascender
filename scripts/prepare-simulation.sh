@@ -3,13 +3,17 @@ set -euo pipefail
 source /etc/ascend/environment.sh
 mkdir -p "$CAMODEL_HOME"
 python3 -I /usr/local/lib/ascend/archives.py /tmp/camodel-inputs "$CAMODEL_HOME"
+python3 -I /usr/local/lib/ascend/simulation.py /tmp/camodel-inputs/settings.json "$CAMODEL_HOME"
 
 cd "$CAMODEL_HOME"
-for script in init.sh env.sh check.sh; do [[ ! -f "$script" ]] || bash -n "$script"; done
-bash ./init.sh
+for script in init.sh check.sh; do [[ ! -f "/tmp/camodel-inputs/$script" ]] || bash -n "$script"; done
+[[ ! -f env.sh ]] || bash -n env.sh
 unset _ASCEND_SIM_ENV_LOADED
 source /etc/ascend/environment.sh
-if [[ -f check.sh ]]; then
+if [[ -f /tmp/camodel-inputs/init.sh ]]; then bash ./init.sh; fi
+unset _ASCEND_SIM_ENV_LOADED
+source /etc/ascend/environment.sh
+if [[ -f /tmp/camodel-inputs/check.sh ]]; then
     bash ./check.sh
     sed -i 's/^simulation_validation=.*/simulation_validation=passed-build-script/' /usr/local/share/ascend/manifest.txt
 else

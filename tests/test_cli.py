@@ -134,11 +134,44 @@ class BuilderTests(unittest.TestCase):
                     self.assertIn(text, output)
                 path.write_bytes(content)
 
-    def test_missing_simulation_init_identifies_script_and_option(self):
+    def test_missing_explicit_simulation_init_identifies_script_and_option(self):
         (self.cam / "init.sh").unlink()
-        output = self.run_cli(*self.simulation(), "--check", "--files-only", expected=1)
+        output = self.run_cli(*self.simulation(), "--camodel-init", "init.sh", "--check", "--files-only", expected=1)
         for text in ("Missing component: CAModel init.sh", "Expected: init.sh", str(self.cam), "--camodel-init"):
             self.assertIn(text, output)
+
+    def test_builtin_simulation_needs_no_init_and_stages_settings(self):
+        (self.cam / "init.sh").unlink()
+        self.run_cli(*self.simulation(), "--check", "--files-only")
+        self.run_cli(*self.simulation())
+        staged = Path(self.env["MOCK_SNAPSHOT"])
+        settings = json.loads((staged / "camodel/settings.json").read_text())
+        self.assertEqual(settings["esl_soc_version"], "0x1000")
+        self.assertEqual(settings["soc"], "950")
+        self.assertFalse((staged / "camodel/init.sh").exists())
+        self.assertTrue((staged / "scripts/simulation.py").is_file())
+
+    def test_simulation_settings_affect_identity_and_reach_context(self):
+        baseline = self.image_from(self.run_cli(*self.simulation(), "--check"))
+        changed = self.image_from(self.run_cli(*self.simulation(), "--esl-soc-version", "0x2000", "--check"))
+        self.assertNotEqual(baseline, changed)
+        self.env["ASCEND_DEV_ESL_SOC_VERSION"] = "0x2000"
+        self.assertEqual(changed, self.image_from(self.run_cli(*self.simulation(), "--check")))
+        self.assertEqual(baseline, self.image_from(self.run_cli(*self.simulation(), "--esl-soc-version", "0x1000", "--check")))
+        self.run_cli(*self.simulation(), "--cann-install-dir", "/opt/cann", "--simulator-soc-version", "Ascend950DT",
+                     "--camodel-lib-dir", "vendor/lib")
+        staged = Path(self.env["MOCK_SNAPSHOT"])
+        settings = json.loads((staged / "camodel/settings.json").read_text())
+        self.assertEqual(settings["cann_install_dir"], "/opt/cann")
+        self.assertEqual(settings["simulator_soc_version"], "Ascend950DT")
+        self.assertEqual(settings["camodel_lib_dir"], "vendor/lib")
+
+    def test_invalid_simulation_settings_fail_before_docker(self):
+        for flag, value in (("--esl-soc-version", "$(touch injected)"), ("--simulator-soc-version", "../950"),
+                            ("--cann-install-dir", "relative"), ("--camodel-lib-dir", "../outside")):
+            self.run_cli(*self.simulation(), flag, value, "--check", "--files-only", expected=1)
+        self.run_cli("--esl-soc-version", "0x1000", "--check", expected=1)
+        self.assertFalse(Path(self.env["MOCK_LOG"]).exists())
 
     def test_missing_explicit_file_takes_priority_over_unrecorded_versions(self):
         original = next(self.torch.glob("torch_npu-*"))
