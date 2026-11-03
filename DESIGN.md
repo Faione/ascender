@@ -64,7 +64,7 @@ ZIP 仅在 `--strict` 下进行宿主机预检，包括目录元数据、路径�
 
 内置 simulation 模块在镜像内查找 CANN `x86_64-linux/simulator/<soc_version>/lib/libruntime_camodel.so`，默认使用活动 CANN 安装目录及解析后的 SoC（允许 Ascend 前缀别名）。通过唯一的 `libnpu_drv_camodel.so` 定位 CAModel 库目录，复制替换运行库、创建两个相对软链接，并在同一目录生成 set_env.sh。路径不唯一或缺失立即报错；目录和型号可显式配置。
 
-set_env.sh 固定 ASCEND_DEVICE_ID=0；ESL_HARDWARE_VERSION 默认 0x1000，由 --esl-hardware-version / ASCEND_DEV_ESL_HARDWARE_VERSION 配置。ESL_SOC_VERSION 为 Ascend950DT 这样的型号字符串，由 --esl-soc-version / ASCEND_DEV_ESL_SOC_VERSION 配置，并用于 CANN simulator 目录选择；未指定时按 --soc 匹配并使用实际目录名。库目录置于 LD_LIBRARY_PATH 首位且重复加载去重。生成的 /etc/ascend/camodel-env.sh 指向该脚本，由公共环境入口在可选 env.sh 之后加载。初始化设置写入只读输入 settings.json，参与 manifest 和镜像指纹，宿主机不读取镜像内路径。
+set_env.sh 固定 ASCEND_DEVICE_ID=0；ESL_HARDWARE_VERSION 默认 0x1000，由 --esl-hardware-version / ASCEND_DEV_ESL_HARDWARE_VERSION 配置。ESL_SOC_VERSION 为 Ascend950DT 这样的型号字符串，由 --esl-soc-version / ASCEND_DEV_ESL_SOC_VERSION 配置，仅用于生成 export，不参与运行库目录选择。CANN simulator 按独立的 --simu-soc / ASCEND_DEV_SIMU_SOC 匹配；未指定时使用材料解析后的 SoC。--soc 仍负责选择 ops 包，显式 --simu-soc 不改变 ops 的选择。未显式配置 ESL_SOC_VERSION 时，导出匹配到的目录名。库目录置于 LD_LIBRARY_PATH 首位且重复加载去重。生成的 /etc/ascend/camodel-env.sh 指向该脚本，由公共环境入口在可选 env.sh 之后加载。初始化设置写入只读输入 settings.json，参与 manifest 和镜像指纹，宿主机不读取镜像内路径。
 
 外部 `init.sh` 改为可选扩展，在内置初始化后、已加载 CANN/仿真环境的 `/opt/CAModel` 下执行。不根据 ZIP 中同名脚本自动执行初始化。`env.sh` 可选，`check.sh` 必须显式启用。扩展/自检不下载内容，作为用户提供的受信任代码在构建中执行。
 

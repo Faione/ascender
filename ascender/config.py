@@ -37,6 +37,7 @@ class BuildConfig:
     camodel_init: str = ""
     camodel_env: str = ""
     camodel_check: str = ""
+    simu_soc: str = ""
     esl_soc_version: str = ""
     esl_hardware_version: str = ""
     cann_install_dir: str = ""
@@ -64,7 +65,7 @@ class BuildConfig:
 
     @property
     def simulation_settings(self):
-        return {"soc": self.soc, "esl_soc_version": self.esl_soc_version,
+        return {"soc": self.soc, "simu_soc": self.simu_soc or self.soc, "esl_soc_version": self.esl_soc_version,
                 "esl_hardware_version": self.esl_hardware_version, "cann_install_dir": self.cann_install_dir,
                 "camodel_lib_dir": self.camodel_lib_dir}
 
@@ -107,8 +108,10 @@ class BuildConfig:
                     f"Invalid pip requirement: {package} (use name[extras] and version constraints).")
         if self.target == "simulation":
             self.esl_hardware_version = self.esl_hardware_version or "0x1000"
+            require(not self.simu_soc or bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", self.simu_soc)),
+                    "--simu-soc must name a CANN simulator directory, e.g. Ascend950DT.")
             require(not self.esl_soc_version or bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", self.esl_soc_version)),
-                    "--esl-soc-version must name a simulator SoC such as Ascend950DT.")
+                    "--esl-soc-version must be an ESL_SOC_VERSION model string such as Ascend950DT.")
             require(not re.fullmatch(r"0[xX][0-9a-fA-F]+", self.esl_soc_version),
                     "--esl-soc-version expects a model such as Ascend950DT; use --esl-hardware-version for 0x1000.")
             require(bool(re.fullmatch(r"(?:0[xX][0-9a-fA-F]+|[0-9]+)", self.esl_hardware_version)),
@@ -118,7 +121,7 @@ class BuildConfig:
                     "--camodel-lib-dir cannot contain parent traversal or colons.")
         else:
             require(not any((self.camodel_archive, self.camodel_init, self.camodel_env, self.camodel_check,
-                             self.esl_soc_version, self.esl_hardware_version, self.cann_install_dir, self.camodel_lib_dir)),
+                             self.simu_soc, self.esl_soc_version, self.esl_hardware_version, self.cann_install_dir, self.camodel_lib_dir)),
                     "CAModel options require --target simulation.")
 
     def validate_framework_versions(self) -> None:

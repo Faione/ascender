@@ -20,15 +20,16 @@ def runtime_library(settings, environment):
     roots = [Path(explicit or active)] if explicit or active else [
         Path("/usr/local/Ascend/cann"), Path("/usr/local/Ascend/cann/latest"),
         Path("/usr/local/Ascend/ascend-toolkit/latest")]
-    requested = settings["esl_soc_version"] or settings["soc"]
+    requested = settings["simu_soc"]
     normalize = lambda value: re.sub(r"^ascend", "", value.lower())
-    exact, aliases, locations = [], [], []
+    exact, aliases, locations, available = [], [], [], []
     for root in roots:
         directory = root / "x86_64-linux/simulator"
         locations.append(directory)
         for child in directory.glob("*"):
             library = child / "lib/libruntime_camodel.so"
             if library.is_file():
+                available.append(library)
                 if child.name.lower() == requested.lower():
                     exact.append(library)
                 elif normalize(child.name) == normalize(requested):
@@ -36,9 +37,12 @@ def runtime_library(settings, environment):
     matches = exact or aliases
     if not matches:
         searched = "\n".join(f"  {path}/{requested}/lib/libruntime_camodel.so" for path in locations)
+        listing = "\n".join(f"  {path}" for path in sorted(available)) or "  none"
         raise ValueError(f"Missing CANN simulator runtime for {requested}. Expected:\n{searched}\n"
-                         "Set --cann-install-dir and/or --esl-soc-version to the installed container paths.")
-    source = unique(matches, "CANN simulator runtime", "--cann-install-dir / --esl-soc-version")
+                         f"Available runtime libraries:\n{listing}\n"
+                         "Check --cann-install-dir and --simu-soc against the installed CANN tree. "
+                         "--esl-soc-version only sets the exported ESL_SOC_VERSION.")
+    source = unique(matches, "CANN simulator runtime", "--cann-install-dir / --simu-soc")
     if source.stat().st_size == 0:
         raise ValueError(f"Empty CANN simulator runtime: {source}")
     # Preserve the selected directory's model name even if its library is a symlink.

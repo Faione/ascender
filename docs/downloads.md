@@ -42,7 +42,7 @@ ops 安装包可使用实际型号文件名，例如 `Ascend-cann-950dt-ops_9.1.
 - 将 `x86_64_ESLMODEL_Ascend950DT_123A1.zip` 与 `x86_64_ESLMODEL_Ascend950DT_123A1_config.zip` 保持原名放到 `ROOT/camodel/`。默认按文件名顺序查找 `*ESLMODEL*.zip`，要求一对同名主包/配置包；不递归、不选其他 ZIP。多套材料时使用两次 `--camodel-archive FILE` 明确选定一对，按参数顺序处理。型号和版本以实际供应方文件名为准，不从 CANN 版本推导。
 - 所有 ZIP 内容直接解压到 `/opt/CAModel/`，保留包内目录，不另建包名目录。例如包内 `lib/model.so` 对应 `/opt/CAModel/lib/model.so`。跨包同名目录可合并，同名文件报错；可执行文件的执行位会保留；不接受目录穿越、绝对路径或 ZIP 内符号链接。
 - 工具内置初始化：将 CANN `x86_64-linux/simulator/<soc_version>/lib/libruntime_camodel.so` 复制到 CAModel 库目录，创建 `libruntime.so` 和 `libascend_hal.so` 相对软链接，并在同一目录生成 `set_env.sh`。默认通过唯一的 `libnpu_drv_camodel.so` 定位库目录；可用 `--camodel-lib-dir` 指定。
-- 生成脚本设置 `ASCEND_DEVICE_ID=0`、`ESL_HARDWARE_VERSION=0x1000`、`ESL_SOC_VERSION=Ascend950DT`，并将库目录置于 `LD_LIBRARY_PATH` 首位。`--esl-soc-version` / `ASCEND_DEV_ESL_SOC_VERSION` 设置型号字符串并选择 CANN simulator 子目录；`--esl-hardware-version` / `ASCEND_DEV_ESL_HARDWARE_VERSION` 设置硬件版本（默认 `0x1000`）；`--cann-install-dir` 设置镜像内 CANN 根目录。未指定型号字符串时，按 `--soc` 查找后使用匹配目录名。
+- 生成脚本设置 `ASCEND_DEVICE_ID=0`、`ESL_HARDWARE_VERSION=0x1000`、`ESL_SOC_VERSION=Ascend950DT`，并将库目录置于 `LD_LIBRARY_PATH` 首位。`--esl-soc-version` / `ASCEND_DEV_ESL_SOC_VERSION` 仅设置导出的型号字符串；`--simu-soc` / `ASCEND_DEV_SIMU_SOC` 选择 CANN simulator 子目录，省略时使用材料解析后的 SoC。`--soc` 选择 ops 包。`--esl-hardware-version` / `ASCEND_DEV_ESL_HARDWARE_VERSION` 设置硬件版本（默认 `0x1000`）；`--cann-install-dir` 设置镜像内 CANN 根目录。未指定导出的型号字符串时，使用按 `--simu-soc` 匹配到的目录名。
 - `init.sh` 改为可选额外初始化，在内置初始化后执行；工作目录为 `/opt/CAModel`，CANN 和生成的仿真环境均已加载。不存在时无需提供；显式指定的脚本仍必须可读、非空，不应在其中补做下载。
 - 可选 `env.sh` 设置额外运行期变量和搜索路径；内置 `set_env.sh` 最后加载以保持指定变量及 CAModel 库目录的优先级；可能被加载到用户 Bash 中，应适合重复进入，不执行安装、不依赖 root、不固定写 `/root`。
 - 可选自检脚本检查该 CAModel 的最小运行任务，不以 `torch.npu.is_available()` 作为仿真判据。

@@ -30,7 +30,7 @@ class SimulationTests(unittest.TestCase):
         (self.library / "libnpu_drv_camodel.so").write_bytes(b"CAModel driver")
         (self.library / "libruntime_camodel.so").write_bytes(b"old runtime")
         self.loader = self.root / "etc/camodel-env.sh"
-        self.settings = dict(soc="950dt", esl_soc_version="", esl_hardware_version="0x1000",
+        self.settings = dict(soc="950dt", simu_soc="950dt", esl_soc_version="", esl_hardware_version="0x1000",
                              cann_install_dir=str(self.cann), camodel_lib_dir="")
 
     def initialize(self):
@@ -77,14 +77,38 @@ class SimulationTests(unittest.TestCase):
             initialize(self.settings, self.home, self.loader, environment={"ASCEND_HOME_PATH": str(self.cann)})
         self.assertEqual((self.library / "libruntime_camodel.so").read_bytes(), b"CANN runtime")
 
-    def test_esl_soc_version_selects_model_and_sets_environment(self):
+    def test_esl_soc_version_only_sets_environment_without_selecting_runtime(self):
         other = self.cann / "x86_64-linux/simulator/Ascend950PR/lib/libruntime_camodel.so"
         other.parent.mkdir(parents=True)
         other.write_bytes(b"PR runtime")
         self.settings["esl_soc_version"] = "Ascend950PR"
         self.initialize()
-        self.assertEqual((self.library / "libruntime_camodel.so").read_bytes(), b"PR runtime")
+        self.assertEqual((self.library / "libruntime_camodel.so").read_bytes(), b"CANN runtime")
         self.assertIn("export ESL_SOC_VERSION=Ascend950PR\n", (self.library / "set_env.sh").read_text())
+
+    def test_exported_model_need_not_have_a_cann_simulator_directory(self):
+        self.settings["esl_soc_version"] = "Ascend950Other"
+        self.initialize()
+        self.assertEqual((self.library / "libruntime_camodel.so").read_bytes(), b"CANN runtime")
+        self.assertIn("export ESL_SOC_VERSION=Ascend950Other\n", (self.library / "set_env.sh").read_text())
+
+    def test_runtime_follows_simu_soc_independently_of_ops_and_exported_model(self):
+        other = self.cann / "x86_64-linux/simulator/Ascend950PR/lib/libruntime_camodel.so"
+        other.parent.mkdir(parents=True)
+        other.write_bytes(b"PR runtime")
+        self.settings.update(simu_soc="950pr", esl_soc_version="Ascend950DT")
+        self.initialize()
+        self.assertEqual((self.library / "libruntime_camodel.so").read_bytes(), b"PR runtime")
+        self.assertIn("export ESL_SOC_VERSION=Ascend950DT\n", (self.library / "set_env.sh").read_text())
+
+    def test_missing_simu_soc_runtime_reports_available_files_without_using_exported_model(self):
+        self.settings.update(simu_soc="950pr", esl_soc_version="Ascend950DT")
+        with self.assertRaisesRegex(ValueError, "Missing CANN simulator runtime for 950pr") as error:
+            self.initialize()
+        self.assertIn(str(self.source), str(error.exception))
+        self.assertIn("--simu-soc", str(error.exception))
+        self.assertIn("--esl-soc-version only sets the exported ESL_SOC_VERSION", str(error.exception))
+        self.assertEqual((self.library / "libruntime_camodel.so").read_bytes(), b"old runtime")
 
     def test_auto_model_keeps_directory_name_when_cann_library_is_a_symlink(self):
         shared = self.cann / "shared/runtime.so"

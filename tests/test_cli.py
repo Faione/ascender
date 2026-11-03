@@ -228,6 +228,7 @@ class BuilderTests(unittest.TestCase):
         self.assertEqual(settings["esl_soc_version"], "")
         self.assertEqual(settings["esl_hardware_version"], "0x1000")
         self.assertEqual(settings["soc"], "950")
+        self.assertEqual(settings["simu_soc"], "950")
         self.assertFalse((staged / "camodel/init.sh").exists())
         self.assertTrue((staged / "scripts/simulation.py").is_file())
 
@@ -238,20 +239,26 @@ class BuilderTests(unittest.TestCase):
         self.env["ASCEND_DEV_ESL_HARDWARE_VERSION"] = "0x2000"
         self.assertEqual(changed, self.image_from(self.run_cli(*self.simulation(), "--check", "--strict")))
         self.assertEqual(baseline, self.image_from(self.run_cli(*self.simulation(), "--esl-hardware-version", "0x1000", "--check", "--strict")))
-        self.run_cli(*self.simulation(), "--cann-install-dir", "/opt/cann", "--esl-soc-version", "Ascend950DT",
+        simulator = self.image_from(self.run_cli(*self.simulation(), "--simu-soc", "Ascend950PR", "--check", "--strict"))
+        self.assertNotEqual(changed, simulator)
+        self.run_cli(*self.simulation(), "--cann-install-dir", "/opt/cann", "--esl-soc-version", "Ascend950DT", "--simu-soc", "Ascend950PR",
                      "--camodel-lib-dir", "vendor/lib")
         staged = Path(self.env["MOCK_SNAPSHOT"])
         settings = json.loads((staged / "camodel/settings.json").read_text())
         self.assertEqual(settings["cann_install_dir"], "/opt/cann")
         self.assertEqual(settings["esl_soc_version"], "Ascend950DT")
+        self.assertEqual(settings["simu_soc"], "Ascend950PR")
+        self.assertEqual(settings["soc"], "950")
         self.assertEqual(settings["camodel_lib_dir"], "vendor/lib")
 
     def test_invalid_simulation_settings_fail_before_docker(self):
         for flag, value in (("--esl-soc-version", "$(touch injected)"), ("--esl-soc-version", "../950"),
+                            ("--simu-soc", "../950"), ("--simu-soc", "$(touch injected)"),
                             ("--esl-soc-version", "0x1000"), ("--esl-hardware-version", "Ascend950DT"),
                             ("--cann-install-dir", "relative"), ("--camodel-lib-dir", "../outside")):
             self.run_cli(*self.simulation(), flag, value, "--check", "--strict", "--files-only", expected=1)
         self.run_cli("--esl-soc-version", "Ascend950DT", "--check", "--strict", expected=1)
+        self.run_cli("--simu-soc", "Ascend950DT", "--check", "--files-only", expected=1)
         self.run_cli(*self.simulation(), "--simulator-soc-version", "Ascend950DT", "--check", "--strict", expected=2)
         self.assertFalse(Path(self.env["MOCK_LOG"]).exists())
 

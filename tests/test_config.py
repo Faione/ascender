@@ -55,6 +55,20 @@ class ConfigurationTests(unittest.TestCase):
     def test_strict_matching_does_not_require_explicit_filters(self):
         BuildConfig(strict_versions=True, strict_soc=True).validate()
 
+    def test_simu_soc_default_follows_resolved_soc_and_can_be_overridden(self):
+        config = BuildConfig(target="simulation")
+        config.validate()
+        config.soc = "950dt"
+        self.assertEqual(config.simulation_settings["simu_soc"], "950dt")
+        config.simu_soc = "Ascend950PR"
+        self.assertEqual(config.simulation_settings["simu_soc"], "Ascend950PR")
+        self.assertEqual(config.soc, "950dt")
+
+    def test_simu_soc_cli_overrides_environment(self):
+        with patch.dict("os.environ", {"ASCEND_DEV_SIMU_SOC": "Ascend950DT"}):
+            self.assertEqual(build_options(["--target", "simulation"]).simu_soc, "Ascend950DT")
+            self.assertEqual(build_options(["--target", "simulation", "--simu-soc", "Ascend950PR"]).simu_soc, "Ascend950PR")
+
 
 if __name__ == "__main__":
     unittest.main()
