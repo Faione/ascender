@@ -280,13 +280,15 @@ class BuilderTests(unittest.TestCase):
         self.assertIn("Multiple candidates", self.run_cli("--check", "--strict", "--files-only", expected=1))
         self.run_cli("--torch-npu-wheel", str(original), "--check", "--strict", "--files-only")
 
-    def test_base_versions_resolve_to_full_versions_and_same_image(self):
-        exact = self.image_from(self.run_cli("--check", "--strict"))
+    def test_base_versions_name_the_tag_while_resolving_full_install_versions(self):
+        exact = self.run_cli("--check", "--strict")
         output = self.run_cli("--torch-version", "2.10.0", "--torch-npu-version", "2.10.0", "--check", "--strict")
         self.assertIn("Resolved torch version: 2.10.0 -> 2.10.0+cpu", output)
         self.assertIn("Resolved torch-npu version: 2.10.0 -> 2.10.0.post4", output)
         self.assertNotIn("compatibility:", output)
-        self.assertEqual(self.image_from(output), exact)
+        self.assertTrue(self.image_from(output).endswith("torch2.10.0-npu2.10.0"))
+        self.assertNotEqual(self.image_from(output), self.image_from(exact))
+        self.assertEqual(self.identity_from(output), self.identity_from(exact))
         self.run_cli("--torch-version", "2.10.0", "--torch-npu-version", "2.10.0", "--check", "--strict", "--files-only")
 
     def test_resolved_full_versions_reach_docker_and_manifest(self):
@@ -300,7 +302,16 @@ class BuilderTests(unittest.TestCase):
         manifest = (report / "manifest.txt").read_text()
         self.assertIn("torch=2.10.0+cpu\n", manifest)
         self.assertIn("torch_npu=2.10.0.post4\n", manifest)
-        self.assertIn("torch2.10.0_cpu-npu2.10.0.post4", (report / "image-ref.txt").read_text())
+        self.assertIn("requested_torch_version=2.10.0\n", manifest)
+        self.assertIn("requested_torch_npu_version=2.10.0\n", manifest)
+        self.assertTrue((report / "image-ref.txt").read_text().strip().endswith("torch2.10.0-npu2.10.0"))
+
+    def test_omitted_naming_fields_are_filled_from_materials(self):
+        args = ["--materials-root", str(self.materials), "--check", "--files-only"]
+        output = self.run_cli(*args, "--torch-version", "2.10.0", common=False)
+        self.assertEqual(self.image_from(output), "ascend-dev:npu-cann9.1.0-950-torch2.10.0-npu2.10.0.post4")
+        self.env["ASCEND_DEV_TORCH_VERSION"] = "2.10.0"
+        self.assertEqual(self.image_from(output), self.image_from(self.run_cli(*args, common=False)))
 
     def test_unified_mirror_reaches_docker_report_and_image_identity(self):
         default = self.run_cli("--check", "--strict")
@@ -394,14 +405,16 @@ class BuilderTests(unittest.TestCase):
         self.assertIn("PASS", output)
         self.assertNotIn("unrecorded", output)
 
-    def test_soc_family_resolves_case_insensitively_and_keeps_same_image(self):
+    def test_soc_family_resolves_case_insensitively_and_keeps_actual_identity(self):
         original = next(self.cann.glob("*-ops_*.run"))
         original.rename(original.with_name(original.name.replace("950-ops", "950DT-ops")))
         output = self.run_cli("--check", "--strict")
         self.assertIn("Resolved SoC: 950 -> 950dt", output)
         self.assertIn("SoC: 950dt", output)
-        self.assertIn("-950dt-", self.image_from(output))
-        self.assertEqual(self.image_from(output), self.image_from(self.run_cli("--soc", "950DT", "--check", "--strict")))
+        self.assertIn("-950-", self.image_from(output))
+        exact = self.run_cli("--soc", "950DT", "--check", "--strict")
+        self.assertIn("-950dt-", self.image_from(exact))
+        self.assertEqual(self.identity_from(output), self.identity_from(exact))
 
     def test_soc_family_ambiguity_warns_and_requires_model_or_file(self):
         original = next(self.cann.glob("*-ops_*.run"))
@@ -416,7 +429,7 @@ class BuilderTests(unittest.TestCase):
         self.assertIn("--ops", output)
         self.assertFalse(Path(self.env["MOCK_LOG"]).exists())
         self.run_cli("--soc", "950dt", "--check", "--strict", "--files-only")
-        self.assertIn("-950pr-", self.image_from(self.run_cli("--ops", str(pr), "--check", "--strict")))
+        self.assertIn("-950-", self.image_from(self.run_cli("--ops", str(pr), "--check", "--strict")))
         self.assertIn("mismatch", self.run_cli("--soc", "950dt", "--ops", str(pr), "--check", "--strict", expected=1))
 
     def test_soc_exact_model_takes_priority_over_family_variants(self):
@@ -434,8 +447,8 @@ class BuilderTests(unittest.TestCase):
         original.rename(dt)
         self.assertIn("Missing ops installer", self.run_cli("--strict-soc", "--check", "--strict", "--files-only", expected=1))
         self.assertIn("mismatch", self.run_cli("--strict-soc", "--ops", str(dt), "--check", "--strict", expected=1))
-        self.assertEqual(self.image_from(self.run_cli("--soc", "950dt", "--strict-soc", "--check", "--strict")),
-                         self.image_from(self.run_cli("--check", "--strict")))
+        self.assertEqual(self.identity_from(self.run_cli("--soc", "950dt", "--strict-soc", "--check", "--strict")),
+                         self.identity_from(self.run_cli("--check", "--strict")))
 
     def test_soc_family_preserves_model_version_and_architecture_boundaries(self):
         original = next(self.cann.glob("*-ops_*.run"))
@@ -456,7 +469,7 @@ class BuilderTests(unittest.TestCase):
         self.run_cli()
         report = self.reports()[0].parent
         self.assertIn("soc=950pr\n", (report / "manifest.txt").read_text())
-        self.assertIn("-950pr-", (report / "image-ref.txt").read_text())
+        self.assertIn("-950-", (report / "image-ref.txt").read_text())
 
     def development_wheels(self):
         result = []
@@ -476,10 +489,10 @@ class BuilderTests(unittest.TestCase):
         output = self.run_cli(*args, "--strict")
         report = self.reports()[0].parent
         self.assertIn("torch_npu=2.7.1.post5.dev20261111\n", (report / "manifest.txt").read_text())
-        self.assertTrue((report / "image-ref.txt").read_text().strip().endswith("npu2.7.1.post5.dev20261111"))
+        self.assertTrue((report / "image-ref.txt").read_text().strip().endswith("torch2.7.1-npu2.7.1"))
         calls = [json.loads(line) for line in Path(self.env["MOCK_LOG"]).read_text().splitlines()]
         self.assertTrue(any("TORCH_NPU_VERSION=2.7.1.post5.dev20261111" in call for call in calls))
-        self.assertEqual(self.image_from(output), self.image_from(self.run_cli(
+        self.assertEqual(self.identity_from(output), self.identity_from(self.run_cli(
             "--torch-version", "2.7.1+cpu", "--torch-npu-version", "2.7.1.post5.dev20261111",
             "--strict-versions", "--check", "--strict")))
 

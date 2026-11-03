@@ -54,6 +54,12 @@ class BuildConfig:
     output_dir: Path = Path("build")
     mode: str = "build"
     files_only: bool = False
+    requested_components: dict[str, str] = field(default_factory=dict, init=False, repr=False)
+
+    @property
+    def image_components(self):
+        return {name: self.requested_components.get(name) or getattr(self, name)
+                for name in ("soc", "cann_version", "torch_version", "torch_npu_version")}
 
     @property
     def apt_mirror(self) -> str:

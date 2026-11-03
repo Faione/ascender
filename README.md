@@ -37,7 +37,7 @@ APT/PIP 默认共用 `http://mirrors.tools.huawei.com`，分别使用 `/ubuntu` 
 
 版本和型号参数均可省略，未指定时直接从目录内唯一候选的文件名识别完整值。需要筛选某个版本时可用 `--torch-version` / `--torch-npu-version`：先精确匹配，再按基础版本匹配后缀，例如 `2.10.0` 可解析为 `2.10.0+cpu` 或 `2.10.0.post4`。存在多个候选时输出 `WARNING`、列出候选并停止；可指定完整版本或 `--torch-wheel` / `--torch-npu-wheel` 精确路径。需要关闭基础版本匹配时追加 `--strict-versions`。
 
-SoC 同样先精确匹配。若没有 `950` 的 ops 包且只有 `950dt` 或 `950pr` 中的一种，`--soc 950` 会采用该具体型号；两种都存在时告警并停止，需要指定 `--soc 950dt` / `--soc 950pr` 或 `--ops FILE`。解析结果显示在终端并用于镜像命名；`--strict-soc` 可关闭型号回退。
+SoC 同样先精确匹配。若没有 `950` 的 ops 包且只有 `950dt` 或 `950pr` 中的一种，`--soc 950` 会采用该具体型号；两种都存在时告警并停止，需要指定 `--soc 950dt` / `--soc 950pr` 或 `--ops FILE`。实际型号显示在终端并记录到报告，镜像 tag 仍保留输入的 `950`；`--strict-soc` 可关闭型号回退。
 
 **指定不同的 CAModel：** 在构建命令中追加两次 `--camodel-archive`，分别指定需要的主包和配置包，例如另一套包名为 `x86_64_ESLMODEL_Ascend950DT_456B2.zip` 和 `x86_64_ESLMODEL_Ascend950DT_456B2_config.zip`（以实际供应方文件为准）。相对路径以 `/data/ascend-materials/camodel/` 为基准；包位于其他目录时，直接使用绝对路径：
 
@@ -202,7 +202,7 @@ Python 依赖只按实际声明安装：Torch/torch-npu wheel 由 pip 解析依�
 - SoC 从指定 CANN 版本、linux/x86_64 的 ops 包名解析，大小写不敏感，输出统一小写。默认先精确匹配；纯数字型号（例如 `950`）可回退到紧随字母后缀的型号（例如 `950dt`、`950pr`），不会匹配 `9500` 或其他数字型号。多候选告警并停止；明确输入 `950dt` 时仅精确匹配，`--strict-soc` 对默认查找和显式 `--ops` 都禁用回退。
 - Torch/torch-npu 默认优先匹配完整版本；无精确候选且输入为 `X.Y.Z` 时，允许匹配同一基础版本的 `.postN`、`.postN.devN`、`+local` 及其组合。例如 `2.7.1` 可匹配 `2.7.1.post5.dev20261111`。只在 cp310/x86_64 wheel 中选择，不跨基础版本、不自动选择 rc 或独立 `.devN` 包；已写出后缀的输入仍按完整版本匹配（`2.7.1.post5` 不会隐式匹配 `2.7.1.post5.dev20261111`）。
 - 唯一候选会显示 `Resolved ... version: 输入 -> 完整版本`。多个候选输出 `WARNING` 并停止，不自动选择最大版本。完整版本仍对应多个平台构建时，使用精确 wheel 文件路径消除歧义。`--strict-versions` 关闭基础版本回退；它也适用于显式 wheel 路径。
-- 镜像 tag、manifest、Docker 构建参数、pip 约束及安装后校验均使用文件中解析出的完整版本；`--strict` 下，自动识别、基础版本筛选和完整版本筛选选择相同文件时得到相同镜像名。
+- 镜像 tag 优先使用用户通过 CLI 或环境变量输入的型号和版本，只有未输入的字段才从材料补齐。例如输入 `2.7.1`，tag 不会被选中文件的 `2.7.1.post5.dev20261111` 覆盖。Docker 构建参数、pip 约束、安装后校验及内容指纹仍使用实际完整版本；manifest 同时记录输入值和实际值。
 - `2.7.1.post5.dev20261111` 等开发包可直接使用；Torch 与 torch-npu 的基础版本须一致。多个开发日期会列出候选，需要指定完整日期版本或文件路径。
 - 通用相对路径以调用目录为基准；`--camodel-archive`、`--camodel-init`、`--camodel-env`、`--camodel-check` 的相对路径以 `ROOT/camodel/` 为基准，均支持绝对路径。
 - `--mirror-url` 统一指定 APT/PIP 源，默认 `http://mirrors.tools.huawei.com`；APT 地址为 `URL/ubuntu`，PIP 地址为 `URL/pypi/simple`。仅接受 HTTP(S) 协议、主机和可选端口，允许末尾 `/`；不接受路径、凭据、查询串、片段或空白。原 `--apt-mirror`、`--pip-index` 已移除。
@@ -235,17 +235,17 @@ CAModel 配对缺失会明确列出缺的是主包还是配置包，以及期望
 名称示意：
 
 ```text
-ascend-dev:npu-cann9.1.0-950-torch2.10.0_cpu-npu2.10.0.post4
-ascend-sim:sim-cann9.1.0-950dt-torch2.7.1_cpu-npu2.7.1.post5.dev20261111
+ascend-dev:npu-cann9.1.0-950-torch2.10.0-npu2.10.0
+ascend-sim:sim-cann9.1.0-950-torch2.7.1-npu2.7.1
 ```
 
-没有 `--tag` 或 `latest` 别名。tag 保留目标、CANN、SoC、Torch/torch-npu 完整版本，包括 `.postN.dev日期`；`+` 转为 Docker 支持的 `_`。末尾不再附加 Python 版本、架构或构建 ID。同一组版本再次构建会更新同一个 tag；其他参数和材料变化通过构建报告、镜像 ID 及镜像的 `dev.ascend.input-fingerprint` 标签区分。
+没有 `--tag` 或 `latest` 别名。tag 包含目标、CANN、SoC、Torch/torch-npu 版本，各字段优先使用输入值，未输入的字段才使用材料中的实际值。上面分别对应输入 `--torch-version 2.10.0 --torch-npu-version 2.10.0` 和 `--torch-version 2.7.1 --torch-npu-version 2.7.1`。若输入完整开发版本，tag 会保留 `.postN.dev日期`；`+` 转为 Docker 支持的 `_`。末尾不附加 Python 版本、架构或构建 ID。同一组命名字段再次构建会更新同一个 tag，具体材料和实际完整版本由构建报告、镜像 ID 及镜像的 `dev.ascend.input-fingerprint` 标签区分。
 
 普通构建用随机 UUID 记录构建身份，无需扫描材料内容。仅 `--strict` 使用 SHA-256 内容指纹，参数（含仿真初始化设置）、材料、容器脚本、共享 ZIP/初始化模块和基础镜像 ID 参与指纹，完整值保存在报告和镜像标签中；材料绝对路径、报告目录、缓存和显示选项不参与。在线依赖源会变化，内容指纹不保证镜像逐字节可复现。
 
 实际构建输出到 `build/<build-id>/`，可用 `--output-dir` 修改父目录：
 
-- `manifest.txt`：参数、自动镜像名、构建 ID 或内容指纹、命名模式及校验状态。
+- `manifest.txt`：实际完整版本、用户输入的 `requested_*` 字段、自动镜像名、构建 ID 或内容指纹、命名模式及校验状态。
 - `materials.sha256`：仅 `--strict` 构建生成，按上下文逻辑路径记录材料 SHA-256；普通构建不生成此文件。
 - `build.log`：Docker 构建输出。
 - `result.txt`：退出码、失败阶段、镜像引用和 ID；材料检查失败也保留。

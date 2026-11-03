@@ -42,6 +42,8 @@ class Materials:
 
 
 def resolve(config: BuildConfig) -> Materials:
+    if not config.requested_components:
+        config.requested_components = config.image_components
     root = config.materials_root.absolute()
     preview = config.mode in ("materials", "preview")
     toolkit, config.cann_version = toolkits.resolve(config.cann_version, root / "cann", config.toolkit, preview=preview)

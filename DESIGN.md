@@ -50,11 +50,11 @@ ROOT/
 
 每个根目录保存一套材料，不额外嵌套版本、SoC 或架构。不同组合选择不同根目录。移除旧布局和 `--cann-root`、`--torch-root`、`--camodel-dir`，不读取旧的 CAModel 目录环境变量。不递归、不逐级回退；精确文件参数覆盖对应默认查找路径。
 
-SoC 由 chips 模块从所选 CANN 版本、linux/x86_64 的 ops 文件名解析，忽略型号大小写。先精确匹配；没有精确候选且请求为纯数字型号时，可匹配紧随字母后缀的具体型号，例如 950 → 950dt/950pr，不匹配 9500。多个候选告警并停止，通过完整 --soc 或 --ops 文件明确选择；--strict-soc 禁用回退。解析后的具体型号参与计划、manifest、tag 和指纹；CAModel 包配对仍按其独立输入契约检查，不推断型号兼容性。
+SoC 由 chips 模块从所选 CANN 版本、linux/x86_64 的 ops 文件名解析，忽略型号大小写。先精确匹配；没有精确候选且请求为纯数字型号时，可匹配紧随字母后缀的具体型号，例如 950 → 950dt/950pr，不匹配 9500。多个候选告警并停止，通过完整 --soc 或 --ops 文件明确选择；--strict-soc 禁用回退。解析后的具体型号用于计划、manifest 和内容指纹；tag 优先保留输入型号。CAModel 包配对仍按其独立输入契约检查，不推断型号兼容性。
 
 Torch/NPU 在 cp310/x86_64 wheel 中先精确匹配；没有精确候选时，基础版本 X.Y.Z 可匹配 `.postN`、`.postN.devN`、`+local` 及其组合，不匹配其他基础版本、rc 或独立 dev 包。例如 2.7.1 → 2.7.1.post5.dev20261111。显式完整后缀仍严格匹配。唯一候选解析为文件中的完整版本；多个候选打印 WARNING 和路径后停止，不选最新、不交互等待。通过完整版本或精确 wheel 路径明确选择，也可用 `--strict-versions` 禁用基础版本回退。
 
-配置模块检查输入格式；材料定位依次从 Toolkit、ops、wheel 文件名识别 CANN 版本、SoC 和框架完整版本，并写回本次构建配置。型号/版本参数可省略；显式值只作为筛选条件。唯一候选直接使用，多候选告警停止。解析后检查 Torch/NPU 基础版本一致性，Toolkit 与 ops 必须同 CANN 版本。后续 tag、指纹、manifest、Docker 参数及安装检查使用实际解析值。strict 下，匹配开关和输入简写不参与内容指纹，相同文件得到相同名称。
+配置模块检查输入格式；材料定位前保存 requested_components，随后依次从 Toolkit、ops、wheel 文件名识别 CANN 版本、SoC 和框架完整版本，并写回实际构建配置。型号/版本参数可省略；唯一候选直接使用，多候选告警停止。解析后检查 Torch/NPU 基础版本一致性，Toolkit 与 ops 必须同 CANN 版本。tag 的每个字段优先使用对应输入值，只有未输入时才使用实际解析值；manifest 同时记录 requested_* 和实际值。Docker 参数、安装检查和内容指纹使用实际值，输入简写不参与内容指纹，因此同一材料可以有不同简写 tag，但 strict 指纹保持一致。
 
 材料缺失由共享错误格式列出组件、期望值、搜索位置、可见候选和修复参数。CAModel 缺少配对文件时明确指出主包/配置包及对应文件名。缺失与不匹配均依据选中材料报告，不维护固定版本组合名单。
 
@@ -84,7 +84,7 @@ set_env.sh 固定 ASCEND_DEVICE_ID=0；ESL_HARDWARE_VERSION 默认 0x1000，由 
 
 实际构建默认不计算或比对哈希，不执行 ZIP 预检，直接复制并安装；只有 `--strict` 启用内容扫描与暂存比对。不生成空的或伪造的 materials.sha256，报告明确记录 integrity_validation=skipped/strict。strict 不影响版本模糊匹配。
 
-短 tag 只包含目标、CANN、SoC 和完整 Torch/NPU 版本，保留 post/dev 日期，不附加 py310、amd64 或构建 ID；不提供自定义 tag。同一组版本对应同一个 tag，重新构建会更新该引用。构建身份单独记录在 manifest 和镜像标签中：普通构建使用随机 UUID（identity_mode=build-id），strict 使用完整 SHA-256（identity_mode=content-sha256）。哈希包含参数、输入内容、容器脚本和基础镜像 ID，不包含本地材料路径、基础镜像别名、报告路径、缓存与显示选项。在线依赖变化仍可能影响镜像内容。
+短 tag 只包含目标、CANN、SoC 和 Torch/NPU 版本。每个字段优先使用用户输入（包括环境变量），未输入才从材料补齐；输入 2.7.1 则名称保留 2.7.1，输入完整 post/dev 日期则保留完整值。不附加 py310、amd64 或构建 ID，不提供自定义 tag。同一组命名字段对应同一个 tag，重新构建会更新该引用。构建身份单独记录在 manifest 和镜像标签中：普通构建使用随机 UUID（identity_mode=build-id），strict 使用完整 SHA-256（identity_mode=content-sha256）。哈希包含实际参数、输入内容、容器脚本和基础镜像 ID，不包含输入简写、本地材料路径、基础镜像别名、报告路径、缓存与显示选项。在线依赖变化仍可能影响镜像内容。
 
 ## 镜像内部
 

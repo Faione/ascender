@@ -19,9 +19,10 @@ class Image:
 
 
 def image_reference(config: BuildConfig) -> str:
-    framework = "cann-only" if config.no_torch else f"torch{config.torch_version}-npu{config.torch_npu_version}"
+    components = config.image_components
+    framework = "cann-only" if config.no_torch else f"torch{components['torch_version']}-npu{components['torch_npu_version']}"
     repository, target = ("ascend-sim", "sim") if config.target == "simulation" else ("ascend-dev", "npu")
-    tag = f"{target}-cann{config.cann_version}-{config.soc}-{framework}".replace("+", "_")
+    tag = f"{target}-cann{components['cann_version']}-{components['soc']}-{framework}".replace("+", "_")
     require(len(tag) <= 128, "Generated tag exceeds Docker limit; component version names are too long.")
     return f"{repository}:{tag}"
 
