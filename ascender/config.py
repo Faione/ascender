@@ -5,13 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 import re
 
-from .errors import ToolError, require
-
-REFERENCE_VERSIONS = (
-    ("CANN", "cann_version", "9.1.0"),
-    ("Torch", "torch_version", "2.10.0+cpu"),
-    ("torch-npu", "torch_npu_version", "2.10.0.post4"),
-)
+from .errors import require
 
 
 def clean_text(value: str) -> str:
@@ -29,7 +23,6 @@ class BuildConfig:
     torch_npu_version: str = ""
     no_torch: bool = False
     base_image: str = "ubuntu:22.04"
-    allow_unverified: bool = False
     strict_versions: bool = False
     strict_soc: bool = False
     strict: bool = False
@@ -66,15 +59,6 @@ class BuildConfig:
                 "esl_hardware_version": self.esl_hardware_version, "cann_install_dir": self.cann_install_dir,
                 "camodel_lib_dir": self.camodel_lib_dir}
 
-    @property
-    def reference_versions(self):
-        return REFERENCE_VERSIONS[:1] if self.no_torch else REFERENCE_VERSIONS
-
-    @property
-    def compatibility(self) -> str:
-        supported = all(getattr(self, setting) == version for _, setting, version in self.reference_versions)
-        return "documented" if supported else "unverified"
-
     def validate(self) -> None:
         for value in vars(self).values():
             for item in value if isinstance(value, list) else [value]:
@@ -85,19 +69,17 @@ class BuildConfig:
         require(self.network in ("default", "none"), "--network must be default or none.")
         require(self.progress in ("plain", "auto", "tty"), "--progress must be plain, auto or tty.")
         self.soc = self.soc.lower()
-        require(bool(re.fullmatch(r"[a-z0-9]+", self.soc)), "--soc must be a model/family such as 950, 950dt or 910b.")
-        require(bool(re.fullmatch(r"\d+\.\d+\.\d+[A-Za-z0-9._-]*", self.cann_version)),
-                "--cann-version requires an exact version, e.g. 9.1.0.")
+        require(not self.soc or bool(re.fullmatch(r"[a-z0-9]+", self.soc)), "--soc must be a model/family such as 950, 950dt or 910b.")
+        require(not self.cann_version or bool(re.fullmatch(r"\d+\.\d+\.\d+[A-Za-z0-9._-]*", self.cann_version)),
+                "--cann-version must be an exact version filter, e.g. 9.1.0.")
         if self.no_torch:
             require(not any((self.torch_version, self.torch_npu_version, self.torch_wheel, self.torch_npu_wheel)),
                     "--no-torch conflicts with Torch options/environment variables.")
         else:
             for version in (self.torch_version, self.torch_npu_version):
-                require(bool(re.fullmatch(r"\d+\.\d+\.\d+[A-Za-z0-9.+_-]*", version)),
-                        "Provide --torch-version and --torch-npu-version (base or full version), or --no-torch.")
-            base = lambda version: re.split(r"\.post|\.dev|rc|\+", version)[0]
-            require(base(self.torch_version) == base(self.torch_npu_version),
-                    "Torch and torch-npu base versions differ; --allow-unverified cannot bypass this conflict.")
+                require(not version or bool(re.fullmatch(r"\d+\.\d+\.\d+[A-Za-z0-9.+_-]*", version)),
+                        "Torch version filters must be base or full versions, e.g. 2.7.1 or 2.7.1.post5.dev20261111.")
+            self.validate_framework_versions()
         require(not self.files_only or self.mode == "check", "--files-only requires --check.")
         require(bool(self.base_image) and not self.base_image.startswith("-")
                 and not any(char.isspace() for char in self.base_image), "--base-image must be an image reference.")
@@ -131,24 +113,11 @@ class BuildConfig:
                              self.esl_soc_version, self.esl_hardware_version, self.cann_install_dir, self.camodel_lib_dir)),
                     "CAModel options require --target simulation.")
 
-    def validate_compatibility(self) -> None:
-        """Check the recorded combination after wheel resolution supplies full versions."""
-        if self.compatibility == "documented" or self.allow_unverified or self.mode in ("materials", "preview"):
+    def validate_framework_versions(self) -> None:
+        """Check only consistency of requested/resolved framework base versions."""
+        if self.no_torch or not self.torch_version or not self.torch_npu_version:
             return
-        combination = ", ".join(f"{name}={getattr(self, setting)}" for name, setting, _ in self.reference_versions)
-        different = [name for name, setting, reference in self.reference_versions if getattr(self, setting) != reference]
-        lines = ["Version combination is unrecorded.",
-                 "Missing item: software compatibility record; this is not a missing-file diagnostic.",
-                 f"  Missing record for: {combination}",
-                 f"  Components differing from the recorded reference: {', '.join(different)}",
-                 "Resolved versions compared with the recorded reference (DIFF marks a different version):"]
-        for name, setting, reference in self.reference_versions:
-            actual = getattr(self, setting)
-            status = "MATCH" if actual == reference else "DIFF"
-            flag = "--" + setting.replace("_", "-")
-            lines.append(f"  {status:5} {name}={actual} ({flag}); recorded={reference}")
-        if self.no_torch:
-            lines.append("  Torch/torch-npu: not requested (--no-torch).")
-        lines.extend(("See docs/downloads.md for recorded combinations.",
-                      "If this combination is intentional, add --allow-unverified; material checks still apply."))
-        raise ToolError("\n".join(lines))
+        base = lambda version: re.match(r"\d+\.\d+\.\d+", version)[0]
+        require(base(self.torch_version) == base(self.torch_npu_version),
+                f"Torch and torch-npu base versions differ: Torch={self.torch_version}, "
+                f"torch-npu={self.torch_npu_version}. Select matching --torch-version / --torch-npu-version or wheel files.")

@@ -32,25 +32,26 @@ def resolve(package: str, requested: str, directory: Path, explicit: str = "", *
     if explicit:
         path = Path(explicit).absolute()
         actual = wheel_version(path, package)
-        require(actual is not None and matches(requested, actual, fuzzy),
+        require(actual is not None and (not requested or matches(requested, actual, fuzzy)),
                 f"Wheel filename/version/ABI/architecture mismatch: {path} (requested {requested})")
     else:
         candidates = [(path, wheel_version(path, package)) for path in sorted(directory.glob(f"{package}-*.whl")) if path.is_file()]
         exact = [(path, version) for path, version in candidates if version == requested]
         compatible = exact or [(path, version) for path, version in candidates
-                               if version is not None and matches(requested, version, fuzzy)]
+                               if version is not None and (not requested or matches(requested, version, fuzzy))]
         if len(compatible) > 1:
             options = "\n".join(f"  {path} (version {version})" for path, version in compatible)
             print(f"WARNING: Multiple candidates for --{flag}-version {requested}:\n{options}", file=sys.stderr)
             raise ToolError(f"Select a full --{flag}-version or an exact --{flag}-wheel path; no wheel was selected.")
         if not compatible:
             if not preview:
-                expected = f"{package} version {requested}; Python cp310, ABI cp310, linux/manylinux x86_64"
+                expected = f"{package} version {requested or 'auto'}; Python cp310, ABI cp310, linux/manylinux x86_64"
                 expected += "; exact version required (--strict-versions)" if not fuzzy else "; exact version first, base-version suffix fallback allowed"
                 raise missing_material(f"{flag} wheel", expected, directory, f"--{flag}-version / --{flag}-wheel",
                                        [path for path, _ in candidates], summary=f"Missing compatible wheel for {package} {requested} (cp310/x86_64).")
-            return directory / f"{package}-{requested}-cp310-cp310-*_x86_64.whl", requested
+            return directory / f"{package}-{requested or '*'}-cp310-cp310-*_x86_64.whl", requested
         path, actual = compatible[0]
     if actual != requested:
-        print(f"Resolved {flag} version: {requested} -> {actual} ({path.name})")
+        label = f"Resolved {flag} version: {requested} -> {actual}" if requested else f"Detected {flag} version: {actual}"
+        print(f"{label} ({path.name})")
     return path, actual

@@ -11,6 +11,7 @@ def build(config, backend=Docker.local):
     status = 1
     try:
         selected = materials.resolve(config)
+        config.validate_framework_versions()
         if config.mode == "materials":
             reporting.materials_help(config, selected)
             return
@@ -22,7 +23,6 @@ def build(config, backend=Docker.local):
             level = "strict (SHA-256 + ZIP CRC)" if config.strict else "fast (SHA-256 and ZIP CRC skipped)"
             print(f"Validation: {level}", flush=True)
         inputs = materials.collect(config, selected)
-        config.validate_compatibility()
         if config.files_only:
             reporting.show_plan(config, selected)
             print("PASS: local materials (package execution/ABI checks deferred to Docker).")

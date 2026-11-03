@@ -5,7 +5,7 @@ import tempfile
 
 
 def show_plan(config, selected):
-    print(f"Target: {config.target} | SoC: {config.soc} | CANN: {config.cann_version} | compatibility: {config.compatibility}")
+    print(f"Target: {config.target} | SoC: {config.soc or 'pending detection'} | CANN: {config.cann_version or 'pending detection'}")
     print(f"Base: {config.base_image} (linux/amd64, Ubuntu 22.04, Python 3.10)")
     for name, path in (("Toolkit", selected.toolkit), ("Ops", selected.ops),
                        ("Torch", selected.torch), ("torch-npu", selected.torch_npu)):
@@ -41,7 +41,7 @@ def materials_help(config, selected):
 
 def manifest(config, selected, image, complete=False):
     validation = ("passed-build-script" if complete else "build-script-required") if selected.check else "not-performed"
-    return (image.parameters + f"base_reference={config.base_image}\ncompatibility={config.compatibility}\n"
+    return (image.parameters + f"base_reference={config.base_image}\n"
             f"image={image.reference}\nfingerprint={image.fingerprint}\n"
             f"device_validation=not-performed\nsimulation_validation={validation}\n")
 

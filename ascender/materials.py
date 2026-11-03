@@ -7,7 +7,7 @@ import hashlib
 from pathlib import Path
 import re
 
-from . import archives, chips, wheels
+from . import archives, chips, toolkits, wheels
 from .config import BuildConfig, clean_text
 from .errors import ToolError, missing_material, require
 
@@ -41,21 +41,10 @@ class Materials:
     check: Path | None = None
 
 
-def choose(explicit: str, directory: Path, pattern: str, preview: bool) -> Path:
-    if explicit:
-        return Path(explicit).absolute()
-    matches = sorted(path for path in directory.glob(pattern) if path.is_file())
-    require(len(matches) <= 1, f"Multiple candidates for {pattern} in {directory}; specify the exact file.")
-    if not matches and not preview:
-        raise missing_material("CANN Toolkit installer", pattern, directory, "--toolkit",
-                               sorted(path for path in directory.glob("*.run") if path.is_file()))
-    return matches[0] if matches else directory / pattern
-
-
 def resolve(config: BuildConfig) -> Materials:
     root = config.materials_root.absolute()
     preview = config.mode in ("materials", "preview")
-    toolkit = choose(config.toolkit, root / "cann", f"Ascend-cann-toolkit_{config.cann_version}_linux-x86_64.run", preview)
+    toolkit, config.cann_version = toolkits.resolve(config.cann_version, root / "cann", config.toolkit, preview=preview)
     ops, config.soc = chips.resolve(config.soc, config.cann_version, root / "cann", config.ops,
                                     fuzzy=not config.strict_soc, preview=preview)
     selected = Materials(toolkit, ops)
@@ -127,9 +116,9 @@ def collect(config: BuildConfig, selected: Materials) -> list[Input]:
             raise ToolError(f"Unreadable material: {component}\n  Path: {path}\n  Action: grant the current user read access.") from error
         result.append(Input(path, destination, checksum))
 
-    require(selected.toolkit.name.lower() == f"ascend-cann-toolkit_{config.cann_version}_linux-x86_64.run",
+    require(selected.toolkit.name.lower() == f"ascend-cann-toolkit_{config.cann_version}_linux-x86_64.run".lower(),
             f"Toolkit filename/version/architecture mismatch: {selected.toolkit}")
-    require(selected.ops.name.lower() == f"ascend-cann-{config.soc}-ops_{config.cann_version}_linux-x86_64.run",
+    require(selected.ops.name.lower() == f"ascend-cann-{config.soc}-ops_{config.cann_version}_linux-x86_64.run".lower(),
             f"Ops filename/model/version/architecture mismatch: {selected.ops}")
     add(selected.toolkit, "packages/cann/toolkit.run", "CANN Toolkit installer", "--toolkit")
     add(selected.ops, "packages/cann/ops.run", "CANN ops installer", "--ops")
