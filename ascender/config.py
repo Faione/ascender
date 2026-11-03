@@ -42,7 +42,7 @@ class BuildConfig:
     camodel_env: str = ""
     camodel_check: str = ""
     esl_soc_version: str = ""
-    simulator_soc_version: str = ""
+    esl_hardware_version: str = ""
     cann_install_dir: str = ""
     camodel_lib_dir: str = ""
     apt_mirror: str = ""
@@ -62,7 +62,7 @@ class BuildConfig:
     @property
     def simulation_settings(self):
         return {"soc": self.soc, "esl_soc_version": self.esl_soc_version,
-                "simulator_soc_version": self.simulator_soc_version, "cann_install_dir": self.cann_install_dir,
+                "esl_hardware_version": self.esl_hardware_version, "cann_install_dir": self.cann_install_dir,
                 "camodel_lib_dir": self.camodel_lib_dir}
 
     @property
@@ -114,16 +114,19 @@ class BuildConfig:
             require(bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*(\[[A-Za-z0-9_,.-]+\])?([<>=!~][A-Za-z0-9_.+*,<>=!~-]+)?", package)),
                     f"Invalid pip requirement: {package} (use name[extras] and version constraints).")
         if self.target == "simulation":
-            self.esl_soc_version = self.esl_soc_version or "0x1000"
-            require(bool(re.fullmatch(r"[A-Za-z0-9_.-]+", self.esl_soc_version)), "Invalid --esl-soc-version; use a value without whitespace or shell syntax.")
-            require(not self.simulator_soc_version or bool(re.fullmatch(r"[A-Za-z0-9_.-]+", self.simulator_soc_version)),
-                    "--simulator-soc-version must name one simulator subdirectory.")
+            self.esl_hardware_version = self.esl_hardware_version or "0x1000"
+            require(not self.esl_soc_version or bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", self.esl_soc_version)),
+                    "--esl-soc-version must name a simulator SoC such as Ascend950DT.")
+            require(not re.fullmatch(r"0[xX][0-9a-fA-F]+", self.esl_soc_version),
+                    "--esl-soc-version expects a model such as Ascend950DT; use --esl-hardware-version for 0x1000.")
+            require(bool(re.fullmatch(r"(?:0[xX][0-9a-fA-F]+|[0-9]+)", self.esl_hardware_version)),
+                    "--esl-hardware-version must be a decimal or hexadecimal number, e.g. 0x1000.")
             require(not self.cann_install_dir or self.cann_install_dir.startswith("/"), "--cann-install-dir must be an absolute container path.")
             require(".." not in PurePosixPath(self.camodel_lib_dir).parts and ":" not in self.camodel_lib_dir,
                     "--camodel-lib-dir cannot contain parent traversal or colons.")
         else:
             require(not any((self.camodel_archive, self.camodel_init, self.camodel_env, self.camodel_check,
-                             self.esl_soc_version, self.simulator_soc_version, self.cann_install_dir, self.camodel_lib_dir)),
+                             self.esl_soc_version, self.esl_hardware_version, self.cann_install_dir, self.camodel_lib_dir)),
                     "CAModel options require --target simulation.")
 
     def validate_compatibility(self) -> None:

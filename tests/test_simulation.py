@@ -30,7 +30,7 @@ class SimulationTests(unittest.TestCase):
         (self.library / "libnpu_drv_camodel.so").write_bytes(b"CAModel driver")
         (self.library / "libruntime_camodel.so").write_bytes(b"old runtime")
         self.loader = self.root / "etc/camodel-env.sh"
-        self.settings = dict(soc="950dt", esl_soc_version="0x1000", simulator_soc_version="",
+        self.settings = dict(soc="950dt", esl_soc_version="", esl_hardware_version="0x1000",
                              cann_install_dir=str(self.cann), camodel_lib_dir="")
 
     def initialize(self):
@@ -49,11 +49,11 @@ class SimulationTests(unittest.TestCase):
         self.initialize()
 
     def test_generated_environment_sets_values_and_keeps_library_first_without_duplicates(self):
-        self.settings["esl_soc_version"] = "0x2345"
+        self.settings["esl_hardware_version"] = "0x2345"
         self.initialize()
         env = dict(os.environ, LD_LIBRARY_PATH=f"/vendor:{self.library}:/other:{self.library}")
         script = '''source "$1"; source "$1"
-[[ "$ASCEND_DEVICE_ID" == 0 && "$ESL_HARDWARE_VERSION" == 0x1000 && "$ESL_SOC_VERSION" == 0x2345 ]]
+[[ "$ASCEND_DEVICE_ID" == 0 && "$ESL_HARDWARE_VERSION" == 0x2345 && "$ESL_SOC_VERSION" == Ascend950DT ]]
 [[ "$LD_LIBRARY_PATH" == "$2:/vendor:/other" ]]
 '''
         result = subprocess.run(["/bin/bash", "-eu", "-c", script, "test", str(self.loader), str(self.library)],
@@ -77,13 +77,31 @@ class SimulationTests(unittest.TestCase):
             initialize(self.settings, self.home, self.loader, environment={"ASCEND_HOME_PATH": str(self.cann)})
         self.assertEqual((self.library / "libruntime_camodel.so").read_bytes(), b"CANN runtime")
 
+    def test_esl_soc_version_selects_model_and_sets_environment(self):
+        other = self.cann / "x86_64-linux/simulator/Ascend950PR/lib/libruntime_camodel.so"
+        other.parent.mkdir(parents=True)
+        other.write_bytes(b"PR runtime")
+        self.settings["esl_soc_version"] = "Ascend950PR"
+        self.initialize()
+        self.assertEqual((self.library / "libruntime_camodel.so").read_bytes(), b"PR runtime")
+        self.assertIn("export ESL_SOC_VERSION=Ascend950PR\n", (self.library / "set_env.sh").read_text())
+
+    def test_auto_model_keeps_directory_name_when_cann_library_is_a_symlink(self):
+        shared = self.cann / "shared/runtime.so"
+        shared.parent.mkdir()
+        shared.write_bytes(b"shared runtime")
+        self.source.unlink()
+        self.source.symlink_to(shared)
+        self.initialize()
+        self.assertIn("export ESL_SOC_VERSION=Ascend950DT\n", (self.library / "set_env.sh").read_text())
+
     def test_explicit_simulator_and_library_directories_disambiguate(self):
         other = self.home / "another/lib"
         other.mkdir(parents=True)
         (other / "libnpu_drv_camodel.so").write_bytes(b"other driver")
         with self.assertRaisesRegex(ValueError, "--camodel-lib-dir"):
             self.initialize()
-        self.settings.update(camodel_lib_dir="vendor/lib", simulator_soc_version="Ascend950DT")
+        self.settings.update(camodel_lib_dir="vendor/lib", esl_soc_version="Ascend950DT")
         self.assertEqual(self.initialize(), self.library.resolve())
 
     def test_missing_cann_runtime_reports_expected_path_before_replacement(self):
@@ -126,7 +144,7 @@ class SimulationTests(unittest.TestCase):
         source = source.replace('Path("/etc/ascend/camodel-env.sh")', f"Path({str(self.loader)!r})")
         (scripts / "simulation.py").write_text(source)
         marker = self.root / "extra-init-called"
-        (scripts / "verify-image.sh").write_text('[[ "$ESL_SOC_VERSION" == 0x1000 && "${LD_LIBRARY_PATH%%:*}" == "$CAMODEL_HOME/vendor/lib" ]]\n')
+        (scripts / "verify-image.sh").write_text('[[ "$ESL_SOC_VERSION" == Ascend950DT && "${LD_LIBRARY_PATH%%:*}" == "$CAMODEL_HOME/vendor/lib" ]]\n')
         cann_env = self.root / "cann-env.sh"
         cann_env.write_text(f"export ASCEND_HOME_PATH={shlex.quote(str(self.cann))}\n")
         environment = self.root / "environment.sh"
@@ -161,7 +179,7 @@ class SimulationTests(unittest.TestCase):
                 shutil.rmtree(self.home)
                 self.loader.unlink(missing_ok=True)
                 if extra_hook:
-                    (inputs / "init.sh").write_text(f'[[ "$ESL_SOC_VERSION" == 0x1000 ]]\nprintf called > {shlex.quote(str(marker))}\n')
+                    (inputs / "init.sh").write_text(f'[[ "$ESL_SOC_VERSION" == Ascend950DT ]]\nprintf called > {shlex.quote(str(marker))}\n')
                 result = subprocess.run(["/bin/bash", str(runner)], env=env, text=True, capture_output=True)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual(marker.exists(), extra_hook)

@@ -103,7 +103,7 @@ docker compose -f /data/ascend-runtime/compose.yaml exec ascend bash -lc \
     "$ASCEND_DEVICE_ID" "$ESL_HARDWARE_VERSION" "$ESL_SOC_VERSION" "$LD_LIBRARY_PATH"'
 ```
 
-默认前三项为 `0`、`0x1000`、`0x1000`，`LD_LIBRARY_PATH` 第一项应为实际 CAModel 库目录。`ESL_SOC_VERSION` 以构建时的 `--esl-soc-version` 为准；修改初始化参数后需重建镜像，再使用新报告中的 `image-ref.txt` 重新生成配置并重建容器。
+默认前三项为 `0`、`0x1000`、匹配的型号字符串（例如 `Ascend950DT`），`LD_LIBRARY_PATH` 第一项应为实际 CAModel 库目录。`ESL_SOC_VERSION` 以构建时的 `--esl-soc-version` 为准，`ESL_HARDWARE_VERSION` 可通过 `--esl-hardware-version` 调整；修改初始化参数后需重建镜像，再使用新报告中的 `image-ref.txt` 重新生成配置并重建容器。
 
 生成器要求本地 Docker context，挂载路径必须存在于本机。NFS、ACL、SELinux、rootless/userns-remap 的权限映射需按实际情况检查。[用户命名空间说明](https://docs.docker.com/engine/security/userns-remap/)
 

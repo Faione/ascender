@@ -17,8 +17,8 @@ def show_plan(config, selected):
         if not selected.archives:
             print(f"CAModel archives: unresolved: {config.materials_root.absolute()}/camodel/*ESLMODEL*.zip")
         print(f"CAModel init: built-in library replacement/symlinks/set_env.sh\nExtra init: {selected.init or 'none'}")
-        print(f"CANN root: {config.cann_install_dir or 'active environment/standard paths'} | simulator SoC: {config.simulator_soc_version or config.soc}")
-        print(f"CAModel library dir: {config.camodel_lib_dir or 'auto: libnpu_drv_camodel.so'} | ESL_SOC_VERSION: {config.esl_soc_version}")
+        print(f"CANN root: {config.cann_install_dir or 'active environment/standard paths'} | simulator SoC: {config.esl_soc_version or config.soc}")
+        print(f"CAModel library dir: {config.camodel_lib_dir or 'auto: libnpu_drv_camodel.so'} | ESL_SOC_VERSION: {config.esl_soc_version or 'auto: matched simulator directory'} | ESL_HARDWARE_VERSION: {config.esl_hardware_version}")
         print(f"CAModel env: {selected.env or 'none'}\nCAModel check: {selected.check or 'none (simulation unverified)'}")
     print(f"Workdir: {config.workdir} | APT mirror: {config.apt_mirror or 'base default'} | pip index: {config.pip_index}")
     print(f"Network: {config.network} | progress: {config.progress} | no-cache: {config.no_cache} | output: {config.output_dir}")
