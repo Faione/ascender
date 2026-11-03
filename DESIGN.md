@@ -15,8 +15,9 @@
 | 模块 | 单一职责 | 修改或替换场景 |
 | --- | --- | --- |
 | `cli.py` | argparse 参数、环境默认值、退出码和信号边界 | CLI 形式调整 |
-| `config.py` | 构建数据对象和纯参数校验 | 参数规则、配套版本变化 |
+| `config.py` | 构建数据对象、参数格式和框架基础版本一致性 | 参数规则变化 |
 | `materials.py` | 固定目录定位、精确文件选择、材料校验和清单 | 目录布局或包名规则变化 |
+| `toolkits.py` | 从 Toolkit 文件名识别 CANN 版本并选择唯一安装器 | Toolkit 文件命名规则变化 |
 | `chips.py` | 将 SoC 具体型号或数字系列解析为唯一 ops 安装包 | 型号匹配策略变化 |
 | `wheels.py` | 将 Torch/NPU 完整或基础版本解析为唯一的兼容 wheel | wheel 文件名、版本匹配策略变化 |
 | `simulation.py` | 镜像内替换 CAModel 运行库、建立链接并生成环境脚本 | 仿真初始化步骤变化；独立标准库模块 |
@@ -52,9 +53,9 @@ SoC 由 chips 模块从所选 CANN 版本、linux/x86_64 的 ops 文件名解析
 
 Torch/NPU 在 cp310/x86_64 wheel 中先精确匹配；没有精确候选时，基础版本 X.Y.Z 可匹配 `.postN`、`.postN.devN`、`+local` 及其组合，不匹配其他基础版本、rc 或独立 dev 包。例如 2.7.1 → 2.7.1.post5.dev20261111。显式完整后缀仍严格匹配。唯一候选解析为文件中的完整版本；多个候选打印 WARNING 和路径后停止，不选最新、不交互等待。通过完整版本或精确 wheel 路径明确选择，也可用 `--strict-versions` 禁用基础版本回退。
 
-配置模块先检查输入格式和 Torch/NPU 基础版本一致性。材料定位调用 chips/wheel 模块后，将解析出的具体型号、完整版本写回本次构建配置；先完成材料合法性检查，再检查软件配套记录，避免材料缺失被配套提示遮住。后续 tag、指纹、manifest、Docker 参数及安装检查使用实际解析值；匹配开关和输入简写不参与指纹，因此相同文件得到相同名称。开发版本仍需 --allow-unverified，不因允许文件名匹配而自动登记为已验证组合。
+配置模块检查输入格式；材料定位依次从 Toolkit、ops、wheel 文件名识别 CANN 版本、SoC 和框架完整版本，并写回本次构建配置。型号/版本参数可省略；显式值只作为筛选条件。唯一候选直接使用，多候选告警停止。解析后检查 Torch/NPU 基础版本一致性，Toolkit 与 ops 必须同 CANN 版本。后续 tag、指纹、manifest、Docker 参数及安装检查使用实际解析值，匹配开关和输入简写不参与指纹，因此相同文件得到相同名称。
 
-材料缺失由共享错误格式列出组件、期望值、搜索位置、可见候选和修复参数。CAModel 缺少配对文件时明确指出主包/配置包及对应文件名。配套诊断则单独标注缺少的是组合记录、完整组合、不同的组件及参考版本，不把未收录等同于缺失文件或已确认不兼容。
+材料缺失由共享错误格式列出组件、期望值、搜索位置、可见候选和修复参数。CAModel 缺少配对文件时明确指出主包/配置包及对应文件名。缺失与不匹配均依据选中材料报告，不维护固定版本组合名单。
 
 仿真默认扫描当前 `camodel/` 的 `*ESLMODEL*.zip`，需要一对 `x86_64_ESLMODEL_<model>_<version>.zip` 和同名 `_config.zip`。例如 `x86_64_ESLMODEL_Ascend950DT_123A1.zip` 及其配置包。多套材料时报错，可显式重复 `--camodel-archive` 选择一对。配对校验不推断仿真包与 CANN/SoC 的兼容关系。
 
@@ -69,7 +70,7 @@ set_env.sh 固定 ASCEND_DEVICE_ID=0；ESL_HARDWARE_VERSION 默认 0x1000，由 
 ## 构建流程与资源
 
 1. CLI 解析，配置对象校验；正常构建建立报告目录。
-2. 材料模块定位并解析型号与 wheel 完整版本，校验材料并生成输入清单；随后配置模块校验配套记录。普通 check 的清单只含源路径/逻辑路径，SHA-256 为空；strict check 和实际构建才计算内容哈希。
+2. 材料模块定位并解析型号与 wheel 完整版本，校验材料并生成输入清单；解析后检查框架基础版本一致性。普通 check 的清单只含源路径/逻辑路径，SHA-256 为空；strict check 和实际构建才计算内容哈希。
 3. Docker 适配器检查本地 context、Engine builder、基础镜像架构和不可变 ID。
 4. 镜像模块计算名称，报告模块记录参数、指纹和哈希。
 5. 上下文模块暂存选定输入并再次核对哈希。
@@ -88,7 +89,7 @@ set_env.sh 固定 ASCEND_DEVICE_ID=0；ESL_HARDWARE_VERSION 默认 0x1000，由 
 
 沿用一个多 target Dockerfile：`system-deps → cann → cann-only/torch-install → dev-common → npu/simulation`。仿真无需先构建 NPU 镜像；共有层复用缓存。原始安装材料通过只读 RUN mount 消费，不写入最终镜像层。
 
-公共环境入口兼容 CANN 的 set_env.sh，恢复调用者的 nounset 状态，避免重复加载。pip 源写入 /etc/pip.conf，所有当前/未来用户共享，运行期仍遵循 pip 标准覆盖规则。构建校验编译器、核心版本、CPU Torch 和普通用户可读性，不导入 torch_npu，不用硬件可用性作为构建条件。
+公共环境入口兼容 CANN 的 set_env.sh，恢复调用者的 nounset 状态，避免重复加载。--mirror-url（或 ASCEND_DEV_MIRROR_URL）统一指定镜像源，默认 http://mirrors.tools.huawei.com，APT/pip 分别追加 /ubuntu、/pypi/simple；Docker 仅传入 MIRROR_URL 构建参数。pip 源写入 /etc/pip.conf，HTTP 源同时配置 trusted-host，所有当前/未来用户共享，运行期仍遵循 pip 标准覆盖规则。构建校验编译器、核心版本、CPU Torch 和普通用户可读性，不导入 torch_npu，不用硬件可用性作为构建条件。
 
 ## 运行配置与权限
 

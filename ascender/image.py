@@ -23,8 +23,8 @@ def identify(config: BuildConfig, selected: Materials, inputs: list[Input], base
     parameters = {
         "target": config.target, "soc": config.soc, "cann": config.cann_version,
         "torch": config.torch_version, "torch_npu": config.torch_npu_version,
-        "no_torch": int(config.no_torch), "base_id": base_id, "apt_mirror": config.apt_mirror,
-        "pip_index": config.pip_index, "workdir": config.workdir,
+        "no_torch": int(config.no_torch), "base_id": base_id, "mirror_url": config.mirror_url,
+        "apt_mirror": config.apt_mirror, "pip_index": config.pip_index, "workdir": config.workdir,
     }
     if config.target == "simulation":
         parameters.update(config.simulation_settings)

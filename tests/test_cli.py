@@ -69,6 +69,75 @@ class BuilderTests(unittest.TestCase):
     def simulation(self):
         return ["--target", "simulation"]
 
+    def test_directory_detection_matches_explicit_image_and_needs_only_root(self):
+        args = ["--materials-root", str(self.materials)]
+        output = self.run_cli(*args, "--check", "--files-only", common=False)
+        for value in ("Detected CANN version: 9.1.0", "Detected SoC: 950", "Detected torch version: 2.10.0+cpu",
+                      "Detected torch-npu version: 2.10.0.post4", "PASS"):
+            self.assertIn(value, output)
+        self.assertFalse(Path(self.env["MOCK_LOG"]).exists())
+        self.assertEqual(self.image_from(self.run_cli(*args, "--check", "--strict", common=False)),
+                         self.image_from(self.run_cli("--check", "--strict")))
+        self.run_cli(*args, "--target", "simulation", "--check", "--files-only", common=False)
+
+    def test_directory_detection_accepts_arbitrary_versions_without_reference(self):
+        self.development_wheels()
+        for path in self.cann.iterdir():
+            path.rename(path.with_name(path.name.replace("9.1.0", "9.2.0").replace("950-ops", "950pr-ops")))
+        self.run_cli("--materials-root", str(self.materials), common=False)
+        manifest = (self.reports()[0].parent / "manifest.txt").read_text()
+        for value in ("cann=9.2.0\n", "soc=950pr\n", "torch=2.7.1+cpu\n", "torch_npu=2.7.1.post5.dev20261111\n"):
+            self.assertIn(value, manifest)
+        self.assertNotIn("compatibility=", manifest)
+
+    def test_multiple_toolkits_require_a_filter_or_explicit_file(self):
+        original = next(self.cann.glob("*toolkit*"))
+        other = original.with_name(original.name.replace("9.1.0", "9.2.0"))
+        shutil.copyfile(original, other)
+        args = ["--materials-root", str(self.materials), "--no-torch", "--check", "--files-only"]
+        output = self.run_cli(*args, common=False, expected=1)
+        for value in ("WARNING: Multiple CANN Toolkit candidates", original.name, other.name, "--cann-version", "--toolkit"):
+            self.assertIn(value, output)
+        self.run_cli(*args, "--cann-version", "9.1.0", common=False)
+        self.run_cli(*args, "--toolkit", str(original), common=False)
+
+    def test_multiple_ops_without_soc_do_not_implicitly_prefer_a_numeric_model(self):
+        original = next(self.cann.glob("*-ops_*.run"))
+        other = original.with_name(original.name.replace("950-ops", "950dt-ops"))
+        shutil.copyfile(original, other)
+        args = ["--materials-root", str(self.materials), "--no-torch", "--check", "--files-only"]
+        output = self.run_cli(*args, common=False, expected=1)
+        self.assertIn("WARNING: Multiple candidates", output)
+        self.run_cli(*args, "--soc", "950", common=False)
+
+    def test_multiple_wheel_versions_require_selection_when_version_is_omitted(self):
+        original = next(self.torch.glob("torch-*"))
+        other = original.with_name(original.name.replace("2.10.0", "2.7.1"))
+        shutil.copyfile(original, other)
+        args = ["--materials-root", str(self.materials), "--check", "--files-only"]
+        output = self.run_cli(*args, common=False, expected=1)
+        self.assertIn("WARNING: Multiple candidates", output)
+        self.run_cli(*args, "--torch-wheel", str(original), common=False)
+
+    def test_inferred_framework_base_versions_must_match(self):
+        original = next(self.torch.glob("torch_npu-*"))
+        original.rename(original.with_name(original.name.replace("2.10.0", "2.7.1")))
+        output = self.run_cli("--materials-root", str(self.materials), "--check", "--files-only", common=False, expected=1)
+        self.assertIn("base versions differ", output)
+        self.assertIn("Torch=2.10.0+cpu", output)
+        self.assertIn("torch-npu=2.7.1.post4", output)
+
+    def test_explicit_files_can_supply_all_metadata_without_version_flags(self):
+        output = self.run_cli("--toolkit", str(next(self.cann.glob("*toolkit*"))),
+                              "--ops", str(next(self.cann.glob("*-ops_*.run"))),
+                              "--torch-wheel", str(next(self.torch.glob("torch-*"))),
+                              "--torch-npu-wheel", str(next(self.torch.glob("torch_npu-*"))),
+                              "--check", "--strict", common=False)
+        self.assertEqual(self.image_from(output), self.image_from(self.run_cli("--check", "--strict")))
+
+    def test_reference_override_option_has_been_removed(self):
+        self.run_cli("--allow-unverified", expected=2)
+
     def test_help_and_unknown_tag(self):
         self.assertIn("--no-torch", self.run_cli("--help", common=False))
         self.assertIn("unrecognized arguments: --tag", self.run_cli("--tag", "custom:test", expected=2))
@@ -186,7 +255,7 @@ class BuilderTests(unittest.TestCase):
         self.run_cli(*self.simulation(), "--simulator-soc-version", "Ascend950DT", "--check", "--strict", expected=2)
         self.assertFalse(Path(self.env["MOCK_LOG"]).exists())
 
-    def test_missing_explicit_file_takes_priority_over_unrecorded_versions(self):
+    def test_missing_explicit_file_identifies_the_selected_component(self):
         original = next(self.torch.glob("torch_npu-*"))
         missing = original.with_name(original.name.replace("post4", "post6"))
         output = self.run_cli("--torch-npu-version", "2.10.0", "--torch-npu-wheel", str(missing),
@@ -207,7 +276,7 @@ class BuilderTests(unittest.TestCase):
         output = self.run_cli("--torch-version", "2.10.0", "--torch-npu-version", "2.10.0", "--check", "--strict")
         self.assertIn("Resolved torch version: 2.10.0 -> 2.10.0+cpu", output)
         self.assertIn("Resolved torch-npu version: 2.10.0 -> 2.10.0.post4", output)
-        self.assertIn("compatibility: documented", output)
+        self.assertNotIn("compatibility:", output)
         self.assertEqual(self.image_from(output), exact)
         self.run_cli("--torch-version", "2.10.0", "--torch-npu-version", "2.10.0", "--check", "--strict", "--files-only")
 
@@ -222,6 +291,22 @@ class BuilderTests(unittest.TestCase):
         self.assertIn("torch=2.10.0+cpu\n", manifest)
         self.assertIn("torch_npu=2.10.0.post4\n", manifest)
         self.assertIn("torch2.10.0_cpu-npu2.10.0.post4", (report / "image-ref.txt").read_text())
+
+    def test_unified_mirror_reaches_docker_report_and_image_identity(self):
+        default = self.image_from(self.run_cli("--check", "--strict"))
+        mirror = "https://mirror.example:8443"
+        output = self.run_cli("--mirror-url", mirror + "/")
+        self.assertIn(f"APT: {mirror}/ubuntu | pip: {mirror}/pypi/simple", output)
+        image = self.image_from(output)
+        self.assertNotEqual(default, image)
+        self.assertEqual(image, self.image_from(self.run_cli("--mirror-url", mirror, "--check", "--strict")))
+        calls = [json.loads(line) for line in Path(self.env["MOCK_LOG"]).read_text().splitlines()]
+        build_call = next(call for call in calls if "buildx" in call and "build" in call)
+        self.assertIn(f"MIRROR_URL={mirror}", build_call)
+        self.assertFalse(any(value.startswith(("APT_MIRROR=", "PIP_INDEX_URL=")) for value in build_call))
+        manifest = (self.reports()[0].parent / "manifest.txt").read_text()
+        for value in (f"mirror_url={mirror}\n", f"apt_mirror={mirror}/ubuntu\n", f"pip_index={mirror}/pypi/simple\n"):
+            self.assertIn(value, manifest)
 
     def test_multiple_fuzzy_candidates_warn_and_require_explicit_selection(self):
         for package, old, new in (("torch", "+cpu", "+cu128"), ("torch_npu", ".post4", ".post6")):
@@ -260,7 +345,7 @@ class BuilderTests(unittest.TestCase):
             original = next(self.torch.glob(f"{package}-*"))
             shutil.copyfile(original, original.with_name(original.name.replace(suffix, "")))
         output = self.run_cli("--torch-version", "2.10.0", "--torch-npu-version", "2.10.0",
-                              "--allow-unverified", "--check", "--strict")
+                              "--check", "--strict")
         self.assertNotIn("WARNING", output)
         self.assertNotIn("Resolved", output)
         self.assertIn("torch2.10.0-npu2.10.0-py310", self.image_from(output))
@@ -285,20 +370,17 @@ class BuilderTests(unittest.TestCase):
             with self.subTest(name=name):
                 candidate = self.torch / name
                 candidate.write_bytes(b"fixture wheel")
-                self.assertIn("Missing compatible wheel", self.run_cli("--torch-version", "2.10.0", "--allow-unverified",
+                self.assertIn("Missing compatible wheel", self.run_cli("--torch-version", "2.10.0",
                                                                       "--check", "--strict", "--files-only", expected=1))
                 candidate.unlink()
 
-    def test_fuzzy_resolution_does_not_bypass_unrecorded_combinations(self):
+    def test_matching_post_versions_need_no_reference_combination(self):
         original = next(self.torch.glob("torch_npu-*"))
         original.rename(original.with_name(original.name.replace("post4", "post6")))
-        output = self.run_cli("--torch-npu-version", "2.10.0", "--check", "--strict", "--files-only", expected=1)
-        self.assertIn("Version combination is unrecorded", output)
-        self.assertIn("torch-npu=2.10.0.post6", output)
-        self.assertIn("MATCH Torch=2.10.0+cpu", output)
-        self.assertIn("DIFF  torch-npu=2.10.0.post6", output)
-        self.assertIn("recorded=2.10.0.post4", output)
-        self.run_cli("--torch-npu-version", "2.10.0", "--allow-unverified", "--check", "--strict", "--files-only")
+        output = self.run_cli("--torch-npu-version", "2.10.0", "--check", "--files-only")
+        self.assertIn("2.10.0.post6", output)
+        self.assertIn("PASS", output)
+        self.assertNotIn("unrecorded", output)
 
     def test_soc_family_resolves_case_insensitively_and_keeps_same_image(self):
         original = next(self.cann.glob("*-ops_*.run"))
@@ -377,11 +459,9 @@ class BuilderTests(unittest.TestCase):
     def test_post_dev_version_resolves_and_reaches_build_without_truncation(self):
         self.development_wheels()
         args = ["--torch-version", "2.7.1", "--torch-npu-version", "2.7.1"]
-        output = self.run_cli(*args, "--check", "--strict", "--files-only", expected=1)
+        output = self.run_cli(*args, "--check", "--strict", "--files-only")
         self.assertIn("Resolved torch-npu version: 2.7.1 -> 2.7.1.post5.dev20261111", output)
-        self.assertIn("Version combination is unrecorded", output)
-        self.assertIn("DIFF  torch-npu=2.7.1.post5.dev20261111", output)
-        output = self.run_cli(*args, "--allow-unverified")
+        output = self.run_cli(*args)
         report = self.reports()[0].parent
         self.assertIn("torch_npu=2.7.1.post5.dev20261111\n", (report / "manifest.txt").read_text())
         self.assertIn("npu2.7.1.post5.dev20261111-", (report / "image-ref.txt").read_text())
@@ -389,13 +469,13 @@ class BuilderTests(unittest.TestCase):
         self.assertTrue(any("TORCH_NPU_VERSION=2.7.1.post5.dev20261111" in call for call in calls))
         self.assertEqual(self.image_from(output), self.image_from(self.run_cli(
             "--torch-version", "2.7.1+cpu", "--torch-npu-version", "2.7.1.post5.dev20261111",
-            "--strict-versions", "--allow-unverified", "--check", "--strict")))
+            "--strict-versions", "--check", "--strict")))
 
     def test_post_dev_date_ambiguity_requires_complete_version(self):
         _, original = self.development_wheels()
         other = original.with_name(original.name.replace("20261111", "20261112"))
         shutil.copyfile(original, other)
-        args = ["--torch-version", "2.7.1", "--torch-npu-version", "2.7.1", "--allow-unverified"]
+        args = ["--torch-version", "2.7.1", "--torch-npu-version", "2.7.1"]
         output = self.run_cli(*args, "--check", "--strict", expected=1)
         self.assertIn("WARNING: Multiple candidates", output)
         self.assertIn("20261111", output)
@@ -410,7 +490,7 @@ class BuilderTests(unittest.TestCase):
         wrong = next(self.torch.glob("torch_npu*"))
         renamed = wrong.with_name(wrong.name.replace("post4", "post6"))
         wrong.rename(renamed)
-        output = self.run_cli("--torch-npu-wheel", str(renamed), "--allow-unverified", "--check", "--strict", "--files-only", expected=1)
+        output = self.run_cli("--torch-npu-wheel", str(renamed), "--check", "--strict", "--files-only", expected=1)
         self.assertIn("mismatch", output)
 
     def test_model_and_abi_mismatch(self):
@@ -422,9 +502,9 @@ class BuilderTests(unittest.TestCase):
                 shutil.copyfile(original, wrong)
                 self.assertIn("mismatch", self.run_cli(option, str(wrong), "--check", "--strict", "--files-only", expected=1))
 
-    def test_unknown_combination_requires_opt_in(self):
+    def test_explicit_version_filters_must_match_files(self):
         self.run_cli("--cann-version", "9.2.0", "--check", "--strict", expected=1)
-        self.run_cli("--torch-npu-version", "2.7.1.post8", "--allow-unverified", "--check", "--strict", expected=1)
+        self.run_cli("--torch-npu-version", "2.7.1.post8", "--check", "--strict", expected=1)
 
     def test_no_torch_and_simulation_option_conflicts(self):
         self.run_cli("--no-torch", "--check", "--strict", expected=1)
@@ -584,7 +664,7 @@ class BuilderTests(unittest.TestCase):
     def test_untrusted_argument_is_not_executed(self):
         marker = self.path / "injected"
         self.run_cli("--pip-package", f"$(touch {marker})", "--dry-run", expected=1)
-        self.run_cli("--pip-index", "https://secret@example.com/simple", "--check", "--strict", expected=1)
+        self.run_cli("--mirror-url", "https://secret@example.com", "--check", "--strict", expected=1)
         self.assertFalse(marker.exists())
 
     def run_extractor(self, *archives, expected=0):

@@ -27,7 +27,13 @@ if sys.argv[1]:
     torch.add(torch.tensor([1]), torch.tensor([2]))
 PY
 python3 -m pip check
+PIP_INDEX_URL="${MIRROR_URL%/}/pypi/simple"
 [[ "$(python3 -m pip --isolated config get global.index-url)" == "$PIP_INDEX_URL" ]]
+trusted_host=""
+if [[ "$MIRROR_URL" == http://* ]]; then
+    trusted_host="${MIRROR_URL#*://}"; trusted_host="${trusted_host%/}"
+    [[ "$(python3 -m pip --isolated config get global.trusted-host)" == "$trusted_host" ]]
+fi
 # Check the common runtime as an unmapped numeric user, with its own writable
 # HOME. No host UID is embedded and no mounted workspace is chowned.
 setpriv --reuid=65534 --regid=65534 --clear-groups bash -e -c '
@@ -36,10 +42,11 @@ setpriv --reuid=65534 --regid=65534 --clear-groups bash -e -c '
     unset _ASCEND_CANN_ENV_LOADED _ASCEND_SIM_ENV_LOADED
     source /etc/ascend/environment.sh
     [[ "$(python3 -m pip --isolated config get global.index-url)" == "$3" ]]
+    if [[ -n "$4" ]]; then [[ "$(python3 -m pip --isolated config get global.trusted-host)" == "$4" ]]; fi
     atc --help >/dev/null
     "$1" --version >/dev/null
     if [[ -n "$2" ]]; then python3 -I -c "import torch; assert torch.tensor([1]).item() == 1"; fi
-' bash "$compiler" "$TORCH_VERSION" "$PIP_INDEX_URL"
+' bash "$compiler" "$TORCH_VERSION" "$PIP_INDEX_URL" "$trusted_host"
 {
     printf '[system]\n'
     dpkg-query -W -f='${Package}=${Version}\n'

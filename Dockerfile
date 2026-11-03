@@ -3,10 +3,9 @@ ARG BASE_IMAGE=ubuntu:22.04
 ARG TORCH_STAGE=torch-install
 FROM ${BASE_IMAGE} AS system-deps
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
-ARG APT_MIRROR=
-ARG PIP_INDEX_URL=https://pypi.org/simple
+ARG MIRROR_URL=http://mirrors.tools.huawei.com
 # The index is persisted in /etc/pip.conf for all current and future users.
-# Keep it as an ARG so runtime environment does not mask user/global pip config.
+# Keep the mirror as an ARG so runtime environment does not mask pip config.
 ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 COPY scripts/ /usr/local/lib/ascend/
 RUN --mount=type=bind,source=config/apt-packages.txt,target=/tmp/apt-packages.txt,readonly \

@@ -13,7 +13,7 @@ docker image inspect ubuntu:22.04
 
 也可在其他机器准备镜像归档后，用 `docker load -i /path/to/ubuntu.tar` 导入。文件导入后的引用应与 `--base-image` 一致。工具不会自动拉取基础镜像；本地缺失直接失败。
 
-## 首个参考组合
+## 下载入口与文件示例
 
 从参考仓库 README 整理以下文件名和直链。文件放到相应目录，不需要收集其他型号的 ops。直链未在本仓库执行下载验证，失效时从官方入口重新选择精确版本。
 
@@ -27,20 +27,13 @@ docker image inspect ubuntu:22.04
 
 官方入口：[CANN](https://www.hiascend.com/developer/download/community/result?module=cann)、[PyTorch CPU wheels](https://download.pytorch.org/whl/cpu/torch/)、[torch-npu releases](https://gitcode.com/Ascend/pytorch/releases)。有官方校验和时应在准备材料时核对；本工具记录的是本地 SHA-256 指纹，不将其标为上游来源验证。
 
-## 配套记录
+## 从目录识别版本
 
-核对日期：2026-10-28。软件组合来源：[Ascend/pytorch 官方版本配套](https://github.com/Ascend/pytorch/blob/master/COMPATIBILITY.md)。TorchNPU 产品发行版 26.1.0 对应此处安装包 `2.10.0.post4`，二者不能混用。
+上表中的文件版本仅为命名及保存位置示例，不构成构建限制。每个材料根目录保存一套用户选择的材料。工具从 Toolkit 文件名读取 CANN 版本，再选择同版本的 ops；从 ops 读取 SoC，从 cp310/x86_64 wheels 读取完整 Torch/torch-npu 版本。多个候选会告警并要求明确选择。
 
-| CANN | Torch | torch-npu 安装包 | 容器 | 配套状态 | 真实镜像 / 设备 / 仿真验收 |
-| --- | --- | --- | --- | --- | --- |
-| 9.1.0 | 2.10.0+cpu | 2.10.0.post4 | Ubuntu 22.04、amd64、Python 3.10 | 软件版本 documented；CPU wheel 与系统为本工具首个候选输入 | 均未完成 |
-| 9.1.0 | 不安装 | 不安装 | 同上 | CANN-only 首版候选 | 均未完成 |
+型号和版本参数可全部省略；需要筛选时可指定 `--soc`、`--cann-version`、`--torch-version`、`--torch-npu-version`，或使用精确文件路径。Torch 与 torch-npu 基础版本应一致。文件选择规则不能代替实际安装与设备功能验证。
 
-SoC 型号由 ops 包和实际设备确定。`950` 是参考示例；接受其他 SoC 字符串不等于其驱动、编译和仿真已验证。未收录的软件组合需显式 `--allow-unverified`，CANN 命名/安装路径仍须落在工具支持范围内，不保证自动适配。
-
-上表是实际安装的完整版本。命令行可写 `--torch-version 2.10.0 --torch-npu-version 2.10.0`，默认先精确匹配，无精确候选时尝试同一基础版本的 post/local 后缀；目录中分别只有上表对应的兼容 wheel 时，会自动解析成 `2.10.0+cpu`、`2.10.0.post4`。多候选会告警并停止，需要指定完整版本或精确 wheel 路径。配套检查使用解析结果，不会因输入简写跳过；`--strict-versions` 可禁用基础版本回退。
-
-也支持 `.postN.devN` 开发包，例如 `torch_npu-2.7.1.post5.dev20261111-cp310-cp310-manylinux_2_28_x86_64.whl` 可由 `--torch-npu-version 2.7.1` 匹配。Torch 基础版本应同为 `2.7.1`；该组合未收录，需 `--allow-unverified`。多日期候选须选择完整版本，工具不自动选最新日期。
+支持 post/local 及 `.postN.devN` 包。例如 `torch_npu-2.7.1.post5.dev20261111-cp310-cp310-manylinux_2_28_x86_64.whl` 可由目录自动识别，也可用 `--torch-npu-version 2.7.1` 筛选。多日期候选需要完整版本或文件路径；`--strict-versions` 禁用基础版本回退。
 
 ops 安装包可使用实际型号文件名，例如 `Ascend-cann-950dt-ops_9.1.0_linux-x86_64.run`、`Ascend-cann-950pr-ops_9.1.0_linux-x86_64.run`。`--soc 950` 优先选择精确的 950 包，否则只在同一 CANN 版本和架构中匹配唯一的字母后缀型号；多个候选告警停止，可用 `--soc 950dt` 或 `--ops FILE` 明确选择。`--strict-soc` 禁用型号回退。
 

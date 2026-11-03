@@ -5,7 +5,7 @@ from pathlib import Path
 import signal
 import sys
 
-from .config import BuildConfig
+from .config import BuildConfig, DEFAULT_MIRROR_URL
 from .errors import ToolError
 
 
@@ -37,8 +37,9 @@ def build_options(argv=None):
     simulation.add_argument("--cann-install-dir", default="", help="Container CANN installation root; default: active CANN environment/standard paths")
     simulation.add_argument("--camodel-lib-dir", default="", help="Library directory inside /opt/CAModel; default: locate unique libnpu_drv_camodel.so")
     adjust = parser.add_argument_group("build adjustments")
+    adjust.add_argument("--mirror-url", default=os.environ.get("ASCEND_DEV_MIRROR_URL") or DEFAULT_MIRROR_URL,
+                        help=f"APT/pip mirror origin; default: {DEFAULT_MIRROR_URL} (ASCEND_DEV_MIRROR_URL)")
     for flag, default, help_text in (
-            ("apt-mirror", "", "Ubuntu repository base URL"), ("pip-index", "https://pypi.org/simple", "Global pip source"),
             ("pip-constraints", "", "Local additional pip constraints"), ("post-install", "", "Local Bash customization script"),
             ("workdir", "/workspace", "Image working directory")):
         adjust.add_argument(f"--{flag}", default=default, help=help_text)

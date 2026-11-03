@@ -7,6 +7,8 @@ import re
 
 from .errors import require
 
+DEFAULT_MIRROR_URL = "http://mirrors.tools.huawei.com"
+
 
 def clean_text(value: str) -> str:
     require(not any(ord(char) < 32 or ord(char) == 127 for char in value),
@@ -39,8 +41,7 @@ class BuildConfig:
     esl_hardware_version: str = ""
     cann_install_dir: str = ""
     camodel_lib_dir: str = ""
-    apt_mirror: str = ""
-    pip_index: str = "https://pypi.org/simple"
+    mirror_url: str = DEFAULT_MIRROR_URL
     apt_package: list[str] = field(default_factory=list)
     pip_package: list[str] = field(default_factory=list)
     pip_constraints: str = ""
@@ -52,6 +53,14 @@ class BuildConfig:
     output_dir: Path = Path("build")
     mode: str = "build"
     files_only: bool = False
+
+    @property
+    def apt_mirror(self) -> str:
+        return self.mirror_url.rstrip("/") + "/ubuntu"
+
+    @property
+    def pip_index(self) -> str:
+        return self.mirror_url.rstrip("/") + "/pypi/simple"
 
     @property
     def simulation_settings(self):
@@ -87,10 +96,9 @@ class BuildConfig:
         require(workdir.is_absolute() and ".." not in workdir.parts
                 and workdir != PurePosixPath("/root") and PurePosixPath("/root") not in workdir.parents,
                 "--workdir must be absolute and accessible to non-root users (not /root).")
-        urls = [self.pip_index] + ([self.apt_mirror] if self.apt_mirror else [])
-        for url in urls:
-            require(bool(re.fullmatch(r"https?://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._~%/+:-]*)?", url)),
-                    "Repository URLs must be http(s) URLs without credentials, queries or whitespace.")
+        require(bool(re.fullmatch(r"https?://[A-Za-z0-9.-]+(:[0-9]+)?/?", self.mirror_url)),
+                "--mirror-url must be an http(s) origin without a path, credentials, query or whitespace.")
+        self.mirror_url = self.mirror_url.rstrip("/")
         for package in self.apt_package:
             require(bool(re.fullmatch(r"[a-z0-9][a-z0-9+.-]*(:[a-z0-9]+)?(=[A-Za-z0-9.+:~_-]+)?", package)),
                     f"Invalid APT package: {package}")

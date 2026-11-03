@@ -20,7 +20,8 @@ def show_plan(config, selected):
         print(f"CANN root: {config.cann_install_dir or 'active environment/standard paths'} | simulator SoC: {config.esl_soc_version or config.soc}")
         print(f"CAModel library dir: {config.camodel_lib_dir or 'auto: libnpu_drv_camodel.so'} | ESL_SOC_VERSION: {config.esl_soc_version or 'auto: matched simulator directory'} | ESL_HARDWARE_VERSION: {config.esl_hardware_version}")
         print(f"CAModel env: {selected.env or 'none'}\nCAModel check: {selected.check or 'none (simulation unverified)'}")
-    print(f"Workdir: {config.workdir} | APT mirror: {config.apt_mirror or 'base default'} | pip index: {config.pip_index}")
+    print(f"Mirror URL: {config.mirror_url} | APT: {config.apt_mirror} | pip: {config.pip_index}")
+    print(f"Workdir: {config.workdir}")
     print(f"Network: {config.network} | progress: {config.progress} | no-cache: {config.no_cache} | output: {config.output_dir}")
     for name, values in (("Extra APT", config.apt_package), ("Extra pip", config.pip_package)):
         if values:
