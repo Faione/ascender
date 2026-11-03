@@ -105,6 +105,101 @@ class BuilderTests(unittest.TestCase):
         self.assertIn("Multiple candidates", self.run_cli("--check", "--files-only", expected=1))
         self.run_cli("--torch-npu-wheel", str(original), "--check", "--files-only")
 
+    def test_base_versions_resolve_to_full_versions_and_same_image(self):
+        exact = self.image_from(self.run_cli("--check"))
+        output = self.run_cli("--torch-version", "2.10.0", "--torch-npu-version", "2.10.0", "--check")
+        self.assertIn("Resolved torch version: 2.10.0 -> 2.10.0+cpu", output)
+        self.assertIn("Resolved torch-npu version: 2.10.0 -> 2.10.0.post4", output)
+        self.assertIn("compatibility: documented", output)
+        self.assertEqual(self.image_from(output), exact)
+        self.run_cli("--torch-version", "2.10.0", "--torch-npu-version", "2.10.0", "--check", "--files-only")
+
+    def test_resolved_full_versions_reach_docker_and_manifest(self):
+        self.run_cli("--torch-version", "2.10.0", "--torch-npu-version", "2.10.0")
+        calls = [json.loads(line) for line in Path(self.env["MOCK_LOG"]).read_text().splitlines()]
+        build_call = next(call for call in calls if "buildx" in call and "build" in call)
+        self.assertIn("TORCH_VERSION=2.10.0+cpu", build_call)
+        self.assertIn("TORCH_NPU_VERSION=2.10.0.post4", build_call)
+        report = self.reports()[0].parent
+        manifest = (report / "manifest.txt").read_text()
+        self.assertIn("torch=2.10.0+cpu\n", manifest)
+        self.assertIn("torch_npu=2.10.0.post4\n", manifest)
+        self.assertIn("torch2.10.0_cpu-npu2.10.0.post4", (report / "image-ref.txt").read_text())
+
+    def test_multiple_fuzzy_candidates_warn_and_require_explicit_selection(self):
+        for package, old, new in (("torch", "+cpu", "+cu128"), ("torch_npu", ".post4", ".post6")):
+            with self.subTest(package=package):
+                log = Path(self.env["MOCK_LOG"])
+                log.unlink(missing_ok=True)
+                original = next(self.torch.glob(f"{package}-*"))
+                other = original.with_name(original.name.replace(old, new))
+                shutil.copyfile(original, other)
+                flag = package.replace("_", "-")
+                args = ["--torch-version", "2.10.0", "--torch-npu-version", "2.10.0"]
+                output = self.run_cli(*args, "--check", expected=1)
+                self.assertIn("WARNING: Multiple candidates", output)
+                self.assertIn(original.name, output)
+                self.assertIn(other.name, output)
+                self.assertIn(f"--{flag}-version", output)
+                self.assertIn(f"--{flag}-wheel", output)
+                self.assertFalse(log.exists())
+                self.run_cli(*args, f"--{flag}-version", "2.10.0" + old, "--check", "--files-only")
+                self.run_cli(*args, f"--{flag}-wheel", str(original), "--check", "--files-only")
+                other.unlink()
+
+    def test_fuzzy_same_version_multiple_platforms_still_require_file_selection(self):
+        original = next(self.torch.glob("torch_npu-*"))
+        other = original.with_name(original.name.replace("manylinux_2_28", "manylinux2014"))
+        shutil.copyfile(original, other)
+        output = self.run_cli("--torch-npu-version", "2.10.0", "--check", expected=1)
+        self.assertIn("WARNING: Multiple candidates", output)
+        self.assertIn(original.name, output)
+        self.assertIn(other.name, output)
+        self.assertFalse(Path(self.env["MOCK_LOG"]).exists())
+        self.run_cli("--torch-npu-version", "2.10.0", "--torch-npu-wheel", str(original), "--check", "--files-only")
+
+    def test_exact_versions_take_priority_over_suffix_candidates(self):
+        for package, suffix in (("torch", "+cpu"), ("torch_npu", ".post4")):
+            original = next(self.torch.glob(f"{package}-*"))
+            shutil.copyfile(original, original.with_name(original.name.replace(suffix, "")))
+        output = self.run_cli("--torch-version", "2.10.0", "--torch-npu-version", "2.10.0",
+                              "--allow-unverified", "--check")
+        self.assertNotIn("WARNING", output)
+        self.assertNotIn("Resolved", output)
+        self.assertIn("torch2.10.0-npu2.10.0-py310", self.image_from(output))
+
+    def test_strict_versions_disable_base_version_fallback(self):
+        self.assertIn("Missing compatible wheel", self.run_cli("--torch-version", "2.10.0", "--strict-versions",
+                                                              "--check", "--files-only", expected=1))
+        self.assertIn("mismatch", self.run_cli("--torch-npu-version", "2.10.0", "--strict-versions",
+                                               "--torch-npu-wheel", str(next(self.torch.glob("torch_npu-*"))),
+                                               "--check", "--files-only", expected=1))
+        self.assertEqual(self.image_from(self.run_cli("--strict-versions", "--check")),
+                         self.image_from(self.run_cli("--check")))
+
+    def test_fuzzy_matching_preserves_release_abi_and_architecture_boundaries(self):
+        original = next(self.torch.glob("torch-*"))
+        original.unlink()
+        for name in (original.name.replace("2.10.0+cpu", "2.10.1+cpu"),
+                     original.name.replace("2.10.0+cpu", "2.10.0rc1"),
+                     original.name.replace("2.10.0+cpu", "2.10.0.dev1"),
+                     original.name.replace("cp310-cp310", "cp311-cp311"),
+                     original.name.replace("x86_64", "aarch64")):
+            with self.subTest(name=name):
+                candidate = self.torch / name
+                candidate.write_bytes(b"fixture wheel")
+                self.assertIn("Missing compatible wheel", self.run_cli("--torch-version", "2.10.0", "--allow-unverified",
+                                                                      "--check", "--files-only", expected=1))
+                candidate.unlink()
+
+    def test_fuzzy_resolution_does_not_bypass_unrecorded_combinations(self):
+        original = next(self.torch.glob("torch_npu-*"))
+        original.rename(original.with_name(original.name.replace("post4", "post6")))
+        output = self.run_cli("--torch-npu-version", "2.10.0", "--check", "--files-only", expected=1)
+        self.assertIn("Version combination is unrecorded", output)
+        self.assertIn("torch-npu=2.10.0.post6", output)
+        self.run_cli("--torch-npu-version", "2.10.0", "--allow-unverified", "--check", "--files-only")
+
     def test_full_post_version_cannot_be_bypassed(self):
         wrong = next(self.torch.glob("torch_npu*"))
         renamed = wrong.with_name(wrong.name.replace("post4", "post6"))

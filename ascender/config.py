@@ -24,6 +24,7 @@ class BuildConfig:
     no_torch: bool = False
     base_image: str = "ubuntu:22.04"
     allow_unverified: bool = False
+    strict_versions: bool = False
     materials_root: Path = Path("materials")
     toolkit: str = ""
     ops: str = ""
@@ -71,7 +72,7 @@ class BuildConfig:
         else:
             for version in (self.torch_version, self.torch_npu_version):
                 require(bool(re.fullmatch(r"\d+\.\d+\.\d+[A-Za-z0-9.+_-]*", version)),
-                        "Provide exact --torch-version and --torch-npu-version (or --no-torch).")
+                        "Provide --torch-version and --torch-npu-version (base or full version), or --no-torch.")
             base = lambda version: re.split(r"\.post|\.dev|rc|\+", version)[0]
             require(base(self.torch_version) == base(self.torch_npu_version),
                     "Torch and torch-npu base versions differ; --allow-unverified cannot bypass this conflict.")
@@ -95,5 +96,10 @@ class BuildConfig:
         if self.target != "simulation":
             require(not any((self.camodel_archive, self.camodel_init, self.camodel_env, self.camodel_check)),
                     "CAModel options require --target simulation.")
+
+    def validate_compatibility(self) -> None:
+        """Check the recorded combination after wheel resolution supplies full versions."""
         require(self.compatibility == "documented" or self.allow_unverified or self.mode in ("materials", "preview"),
-                "Version combination is unrecorded; see docs/downloads.md or explicitly use --allow-unverified.")
+                f"Version combination is unrecorded: CANN={self.cann_version}, "
+                f"Torch={self.torch_version or 'not installed'}, torch-npu={self.torch_npu_version or 'not installed'}; "
+                "see docs/downloads.md or explicitly use --allow-unverified.")

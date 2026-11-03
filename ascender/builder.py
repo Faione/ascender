@@ -11,6 +11,7 @@ def build(config, backend=Docker.local):
     status = 1
     try:
         selected = materials.resolve(config)
+        config.validate_compatibility()
         if config.mode == "materials":
             reporting.materials_help(config, selected)
             return

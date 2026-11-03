@@ -15,11 +15,12 @@ def build_options(argv=None):
     for flag, default, choices in (("target", "npu", ("npu", "simulation")), ("soc", "", None),
                                     ("cann-version", "", None), ("torch-version", "", None),
                                     ("torch-npu-version", "", None), ("base-image", "ubuntu:22.04", None)):
-        help_text = f"Default: {default}" if default else ("Required unless --no-torch" if flag.startswith("torch") else "Required")
+        help_text = f"Default: {default}" if default else ("Base or full version; required unless --no-torch" if flag.startswith("torch") else "Required")
         environment.add_argument(f"--{flag}", default=os.environ.get("ASCEND_DEV_" + flag.upper().replace("-", "_")) or default,
                                  choices=choices, help=help_text)
     environment.add_argument("--no-torch", action="store_true", help="CANN-only image; omit all Torch options")
     environment.add_argument("--allow-unverified", action="store_true", help="Allow an undocumented software combination")
+    environment.add_argument("--strict-versions", action="store_true", help="Require exact Torch/torch-npu versions; disable base-version fallback")
     local = parser.add_argument_group("local materials: ROOT/cann, ROOT/torch, ROOT/camodel")
     local.add_argument("--materials-root", type=Path, default=Path(os.environ.get("ASCEND_DEV_MATERIALS_ROOT") or "materials"), help="Default: ./materials")
     for flag in ("toolkit", "ops", "torch-wheel", "torch-npu-wheel"):

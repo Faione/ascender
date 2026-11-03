@@ -38,6 +38,8 @@ docker image inspect ubuntu:22.04
 
 SoC 型号由 ops 包和实际设备确定。`950` 是参考示例；接受其他 SoC 字符串不等于其驱动、编译和仿真已验证。未收录的软件组合需显式 `--allow-unverified`，CANN 命名/安装路径仍须落在工具支持范围内，不保证自动适配。
 
+上表是实际安装的完整版本。命令行可写 `--torch-version 2.10.0 --torch-npu-version 2.10.0`，默认先精确匹配，无精确候选时尝试同一基础版本的 post/local 后缀；目录中分别只有上表对应的兼容 wheel 时，会自动解析成 `2.10.0+cpu`、`2.10.0.post4`。多候选会告警并停止，需要指定完整版本或精确 wheel 路径。配套检查使用解析结果，不会因输入简写跳过；`--strict-versions` 可禁用基础版本回退。
+
 ## 仿真脚本契约
 
 - 将 `x86_64_ESLMODEL_Ascend950DT_123A1.zip` 与 `x86_64_ESLMODEL_Ascend950DT_123A1_config.zip` 保持原名放到 `ROOT/camodel/`。默认按文件名顺序查找 `*ESLMODEL*.zip`，要求一对同名主包/配置包；不递归、不选其他 ZIP。多套材料时使用两次 `--camodel-archive FILE` 明确选定一对，按参数顺序处理。型号和版本以实际供应方文件名为准，不从 CANN 版本推导。

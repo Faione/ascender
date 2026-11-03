@@ -7,7 +7,7 @@ import hashlib
 from pathlib import Path
 import re
 
-from . import archives
+from . import archives, wheels
 from .config import BuildConfig, clean_text
 from .errors import require
 
@@ -57,8 +57,12 @@ def resolve(config: BuildConfig) -> Materials:
         choose(config.toolkit, root / "cann", f"Ascend-cann-toolkit_{config.cann_version}_linux-x86_64.run", preview),
         choose(config.ops, root / "cann", f"Ascend-cann-{config.soc}-ops_{config.cann_version}_linux-x86_64.run", preview))
     if not config.no_torch:
-        selected.torch = choose(config.torch_wheel, root / "torch", f"torch-{config.torch_version}-cp310-cp310-*_x86_64.whl", preview)
-        selected.torch_npu = choose(config.torch_npu_wheel, root / "torch", f"torch_npu-{config.torch_npu_version}-cp310-cp310-*_x86_64.whl", preview)
+        selected.torch, config.torch_version = wheels.resolve(
+            "torch", config.torch_version, root / "torch", config.torch_wheel,
+            fuzzy=not config.strict_versions, preview=preview)
+        selected.torch_npu, config.torch_npu_version = wheels.resolve(
+            "torch_npu", config.torch_npu_version, root / "torch", config.torch_npu_wheel,
+            fuzzy=not config.strict_versions, preview=preview)
     if config.target == "simulation":
         directory = root / "camodel"
         selected.archives = ([(directory / name).absolute() for name in config.camodel_archive]
