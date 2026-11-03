@@ -2,7 +2,7 @@
 from . import context, materials, reporting
 from .docker import Docker
 from .errors import require
-from .image import identify
+from .image import identify, image_reference
 
 
 def build(config, backend=Docker.local):
@@ -17,7 +17,7 @@ def build(config, backend=Docker.local):
             return
         if config.mode == "preview":
             reporting.show_plan(config, selected)
-            print("Image: pending (build ID at build time; content fingerprint only with --strict)")
+            print("Image: pending (full component versions are resolved from materials at check/build time)")
             return
         if config.mode == "check":
             level = "strict (SHA-256 + ZIP CRC)" if config.strict else "fast (SHA-256 and ZIP CRC skipped)"
@@ -27,6 +27,7 @@ def build(config, backend=Docker.local):
         inputs = materials.collect(config, selected)
         if config.files_only:
             reporting.show_plan(config, selected)
+            print(f"Image: {image_reference(config)}")
             print("PASS: local materials (package execution/ABI checks deferred to Docker).")
             return
         if report:
@@ -35,11 +36,12 @@ def build(config, backend=Docker.local):
         base_id = docker.base_image(config.base_image)
         reporting.show_plan(config, selected)
         if config.mode == "check" and not config.strict:
-            print("Image: pending (content hashes skipped; use --check --strict to calculate the final tag)")
+            print(f"Image: {image_reference(config)}")
             print("PASS: materials and local Docker builder; image not built.")
             return
         image = identify(config, selected, inputs, base_id)
         print(f"Image: {image.reference}")
+        print(f"Build identity: {image.fingerprint}")
         if config.mode == "check":
             print("PASS: materials and local Docker builder; image not built.")
             return

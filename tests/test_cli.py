@@ -63,6 +63,9 @@ class BuilderTests(unittest.TestCase):
     def image_from(self, output):
         return re.search(r"^Image: (ascend-\S+)$", output, re.M).group(1)
 
+    def identity_from(self, output):
+        return re.search(r"^Build identity: ([0-9a-f]+)$", output, re.M).group(1)
+
     def reports(self):
         return list((self.path / "build").glob("*/result.txt"))
 
@@ -165,9 +168,8 @@ class BuilderTests(unittest.TestCase):
         self.assertIn("fast (SHA-256 and ZIP CRC skipped)", output)
         self.assertFalse(Path(self.env["MOCK_LOG"]).exists())
         output = self.run_cli("--check")
-        self.assertIn("Image: pending", output)
-        self.assertIn("--check --strict", output)
-        self.assertNotIn("Image: ascend-", output)
+        self.assertIn("Image: ascend-dev:npu-cann9.1.0-950-torch2.10.0_cpu-npu2.10.0.post4", output)
+        self.assertNotIn("Build identity:", output)
         self.run_cli("--dry-run", "--strict", expected=1)
 
     def test_missing_and_empty_inputs(self):
@@ -233,13 +235,13 @@ class BuilderTests(unittest.TestCase):
         self.assertTrue((staged / "scripts/simulation.py").is_file())
 
     def test_simulation_settings_affect_identity_and_reach_context(self):
-        baseline = self.image_from(self.run_cli(*self.simulation(), "--check", "--strict"))
-        changed = self.image_from(self.run_cli(*self.simulation(), "--esl-hardware-version", "0x2000", "--check", "--strict"))
+        baseline = self.identity_from(self.run_cli(*self.simulation(), "--check", "--strict"))
+        changed = self.identity_from(self.run_cli(*self.simulation(), "--esl-hardware-version", "0x2000", "--check", "--strict"))
         self.assertNotEqual(baseline, changed)
         self.env["ASCEND_DEV_ESL_HARDWARE_VERSION"] = "0x2000"
-        self.assertEqual(changed, self.image_from(self.run_cli(*self.simulation(), "--check", "--strict")))
-        self.assertEqual(baseline, self.image_from(self.run_cli(*self.simulation(), "--esl-hardware-version", "0x1000", "--check", "--strict")))
-        simulator = self.image_from(self.run_cli(*self.simulation(), "--simu-soc", "Ascend950PR", "--check", "--strict"))
+        self.assertEqual(changed, self.identity_from(self.run_cli(*self.simulation(), "--check", "--strict")))
+        self.assertEqual(baseline, self.identity_from(self.run_cli(*self.simulation(), "--esl-hardware-version", "0x1000", "--check", "--strict")))
+        simulator = self.identity_from(self.run_cli(*self.simulation(), "--simu-soc", "Ascend950PR", "--check", "--strict"))
         self.assertNotEqual(changed, simulator)
         self.run_cli(*self.simulation(), "--cann-install-dir", "/opt/cann", "--esl-soc-version", "Ascend950DT", "--simu-soc", "Ascend950PR",
                      "--camodel-lib-dir", "vendor/lib")
@@ -301,13 +303,14 @@ class BuilderTests(unittest.TestCase):
         self.assertIn("torch2.10.0_cpu-npu2.10.0.post4", (report / "image-ref.txt").read_text())
 
     def test_unified_mirror_reaches_docker_report_and_image_identity(self):
-        default = self.image_from(self.run_cli("--check", "--strict"))
+        default = self.run_cli("--check", "--strict")
         mirror = "https://mirror.example:8443"
         output = self.run_cli("--mirror-url", mirror + "/", "--strict")
         self.assertIn(f"APT: {mirror}/ubuntu | pip: {mirror}/pypi/simple", output)
-        image = self.image_from(output)
-        self.assertNotEqual(default, image)
-        self.assertEqual(image, self.image_from(self.run_cli("--mirror-url", mirror, "--check", "--strict")))
+        self.assertEqual(self.image_from(default), self.image_from(output))
+        identity = self.identity_from(output)
+        self.assertNotEqual(self.identity_from(default), identity)
+        self.assertEqual(identity, self.identity_from(self.run_cli("--mirror-url", mirror, "--check", "--strict")))
         calls = [json.loads(line) for line in Path(self.env["MOCK_LOG"]).read_text().splitlines()]
         build_call = next(call for call in calls if "buildx" in call and "build" in call)
         self.assertIn(f"MIRROR_URL={mirror}", build_call)
@@ -357,7 +360,7 @@ class BuilderTests(unittest.TestCase):
                               "--check", "--strict")
         self.assertNotIn("WARNING", output)
         self.assertNotIn("Resolved", output)
-        self.assertIn("torch2.10.0-npu2.10.0-py310", self.image_from(output))
+        self.assertTrue(self.image_from(output).endswith("torch2.10.0-npu2.10.0"))
 
     def test_strict_versions_disable_base_version_fallback(self):
         self.assertIn("Missing compatible wheel", self.run_cli("--torch-version", "2.10.0", "--strict-versions",
@@ -473,7 +476,7 @@ class BuilderTests(unittest.TestCase):
         output = self.run_cli(*args, "--strict")
         report = self.reports()[0].parent
         self.assertIn("torch_npu=2.7.1.post5.dev20261111\n", (report / "manifest.txt").read_text())
-        self.assertIn("npu2.7.1.post5.dev20261111-", (report / "image-ref.txt").read_text())
+        self.assertTrue((report / "image-ref.txt").read_text().strip().endswith("npu2.7.1.post5.dev20261111"))
         calls = [json.loads(line) for line in Path(self.env["MOCK_LOG"]).read_text().splitlines()]
         self.assertTrue(any("TORCH_NPU_VERSION=2.7.1.post5.dev20261111" in call for call in calls))
         self.assertEqual(self.image_from(output), self.image_from(self.run_cli(
@@ -527,29 +530,32 @@ class BuilderTests(unittest.TestCase):
             self.run_cli(flag, str(self.materials), "--check", "--strict", expected=2)
 
     def test_identity_stability_and_material_changes(self):
-        first = self.image_from(self.run_cli("--check", "--strict"))
+        first = self.identity_from(self.run_cli("--check", "--strict"))
         self.env["ASCEND_DEV_TAG"] = "ignored:custom"
         moved = self.path / "other material location"
         shutil.copytree(self.materials, moved)
-        second = self.image_from(self.run_cli("--materials-root", str(moved), "--output-dir", str(self.path / "other-output"),
+        second = self.identity_from(self.run_cli("--materials-root", str(moved), "--output-dir", str(self.path / "other-output"),
                                               "--no-cache", "--progress", "auto", "--check", "--strict"))
         self.assertEqual(first, second)
         next(self.cann.glob("*toolkit*")).write_text("changed installer")
-        self.assertNotEqual(first, self.image_from(self.run_cli("--check", "--strict")))
+        self.assertNotEqual(first, self.identity_from(self.run_cli("--check", "--strict")))
 
     def test_base_image_aliases_with_same_id_share_identity(self):
         # Here the mock returns one immutable base ID for both aliases.
-        first = self.image_from(self.run_cli("--check", "--strict"))
-        self.assertEqual(first, self.image_from(self.run_cli("--base-image", "ubuntu-local:alias", "--check", "--strict")))
+        first = self.identity_from(self.run_cli("--check", "--strict"))
+        self.assertEqual(first, self.identity_from(self.run_cli("--base-image", "ubuntu-local:alias", "--check", "--strict")))
 
     def test_simulation_identity_and_script_inputs(self):
-        npu = self.image_from(self.run_cli("--check", "--strict"))
-        first = self.image_from(self.run_cli(*self.simulation(), "--check", "--strict"))
-        self.assertTrue(first.startswith("ascend-sim:sim-"))
+        npu = self.identity_from(self.run_cli("--check", "--strict"))
+        output = self.run_cli(*self.simulation(), "--check", "--strict")
+        first = self.identity_from(output)
+        self.assertTrue(self.image_from(output).startswith("ascend-sim:sim-"))
         self.assertNotEqual(npu, first)
         (self.cam / "init.sh").write_text("echo changed\n")
-        self.assertNotEqual(first, self.image_from(self.run_cli(*self.simulation(), "--check", "--strict")))
-        self.assertEqual(npu, self.image_from(self.run_cli("--check", "--strict")))
+        modified = self.run_cli(*self.simulation(), "--check", "--strict")
+        self.assertEqual(self.image_from(output), self.image_from(modified))
+        self.assertNotEqual(first, self.identity_from(modified))
+        self.assertEqual(npu, self.identity_from(self.run_cli("--check", "--strict")))
 
     def test_simulation_duplicate_and_missing_scripts(self):
         self.run_cli(*self.simulation(), "--camodel-archive", MAIN, "--camodel-archive", MAIN, "--check", "--strict", expected=1)

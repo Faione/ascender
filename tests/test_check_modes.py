@@ -57,12 +57,12 @@ class CheckModeTests(unittest.TestCase):
         self.backend.assert_not_called()
         self.assertFalse((self.root / "reports").exists())
 
-    def test_default_docker_check_does_not_calculate_final_image_name(self):
+    def test_default_docker_check_names_image_without_calculating_fingerprint(self):
         with patch("ascender.materials.digest", side_effect=AssertionError("hash scan")), \
                 patch("ascender.builder.identify", side_effect=AssertionError("unhashed identity")):
             output = self.run_build(files_only=False)
-        self.assertIn("Image: pending", output)
-        self.assertIn("--check --strict", output)
+        self.assertIn("Image: ascend-sim:sim-cann9.1.0-950-cann-only", output)
+        self.assertNotIn("Build identity:", output)
         self.docker.base_image.assert_called_once()
         self.docker.build.assert_not_called()
         self.docker.container.assert_not_called()
@@ -121,13 +121,14 @@ class CheckModeTests(unittest.TestCase):
         self.assertIn("identity_mode=build-id\n", manifest)
         self.assertIn("integrity_validation=skipped\n", manifest)
 
-    def test_default_tags_are_unique_build_ids(self):
+    def test_short_tags_are_stable_while_build_ids_remain_unique(self):
         config = self.config(mode="build", files_only=False)
         selected = materials.resolve(config)
         inputs = materials.collect(config, selected)
         first = identify(config, selected, inputs, "sha256:base")
         second = identify(config, selected, inputs, "sha256:base")
-        self.assertNotEqual(first.reference, second.reference)
+        self.assertEqual(first.reference, second.reference)
+        self.assertNotEqual(first.fingerprint, second.fingerprint)
         self.assertEqual(first.hashes, "")
 
     def test_strict_build_hashes_sources_and_copies_and_scans_zip_crcs(self):

@@ -1,4 +1,4 @@
-"""Automatic image names: build IDs by default, content fingerprints in strict mode."""
+"""Short version-based image names, with build identities kept separately."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -16,6 +16,14 @@ class Image:
     fingerprint: str
     parameters: str
     hashes: str
+
+
+def image_reference(config: BuildConfig) -> str:
+    framework = "cann-only" if config.no_torch else f"torch{config.torch_version}-npu{config.torch_npu_version}"
+    repository, target = ("ascend-sim", "sim") if config.target == "simulation" else ("ascend-dev", "npu")
+    tag = f"{target}-cann{config.cann_version}-{config.soc}-{framework}".replace("+", "_")
+    require(len(tag) <= 128, "Generated tag exceeds Docker limit; component version names are too long.")
+    return f"{repository}:{tag}"
 
 
 def identify(config: BuildConfig, selected: Materials, inputs: list[Input], base_id: str) -> Image:
@@ -37,8 +45,4 @@ def identify(config: BuildConfig, selected: Materials, inputs: list[Input], base
         settings += "".join(f"{key}={value}\n" for value in values)
     hashes = "".join(f"{item.sha256}  {item.destination}\n" for item in inputs) if config.strict else ""
     fingerprint = hashlib.sha256((settings + hashes).encode()).hexdigest() if config.strict else uuid.uuid4().hex
-    framework = "cann-only" if config.no_torch else f"torch{config.torch_version}-npu{config.torch_npu_version}"
-    repository, target = ("ascend-sim", "sim") if config.target == "simulation" else ("ascend-dev", "npu")
-    tag = f"{target}-cann{config.cann_version}-{config.soc}-{framework}-py310-amd64-{fingerprint[:12]}".replace("+", "_")
-    require(len(tag) <= 128, "Generated tag exceeds Docker limit; component version names are too long.")
-    return Image(f"{repository}:{tag}", fingerprint, settings, hashes)
+    return Image(image_reference(config), fingerprint, settings, hashes)

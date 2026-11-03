@@ -80,11 +80,11 @@ set_env.sh 固定 ASCEND_DEVICE_ID=0；ESL_HARDWARE_VERSION 默认 0x1000，由 
 
 所有临时目录和容器使用上下文管理器清理；SIGINT/SIGTERM 经过退出边界触发 finally。失败记录退出码与阶段，保留构建日志。不执行 Docker 全局 prune，不使用业务容器执行检查。
 
-默认 `--check` / `--check --files-only` 使用快速模式，只定位材料并检查文件属性与命名，不读取文件内容或 ZIP 元数据。前者检查 Docker 后显示镜像名待生成，后者不访问 Docker；`--check --strict` 才计算内容 tag。镜像身份和上下文模块仅在 strict 下要求全部材料具备内容哈希。
+默认 `--check` / `--check --files-only` 使用快速模式，只定位材料并检查文件属性与命名，不读取文件内容或 ZIP 元数据。两者都显示按实际版本生成的短 tag；前者额外检查 Docker，后者不访问 Docker。--check --strict 才计算完整构建指纹，镜像身份和上下文模块仅在 strict 下要求全部材料具备内容哈希。
 
 实际构建默认不计算或比对哈希，不执行 ZIP 预检，直接复制并安装；只有 `--strict` 启用内容扫描与暂存比对。不生成空的或伪造的 materials.sha256，报告明确记录 integrity_validation=skipped/strict。strict 不影响版本模糊匹配。
 
-名称包含目标、CANN、SoC、完整 Torch/NPU 版本、py310、amd64 和 12 位 ID；不提供自定义 tag。普通构建使用随机 UUID，identity_mode=build-id，每次构建生成新 tag。strict 使用 SHA-256 前 12 位，identity_mode=content-sha256；哈希包含参数、输入内容、容器脚本和基础镜像 ID，不包含本地材料路径、基础镜像别名、报告路径、缓存与显示选项。在线依赖变化仍可能影响镜像内容。
+短 tag 只包含目标、CANN、SoC 和完整 Torch/NPU 版本，保留 post/dev 日期，不附加 py310、amd64 或构建 ID；不提供自定义 tag。同一组版本对应同一个 tag，重新构建会更新该引用。构建身份单独记录在 manifest 和镜像标签中：普通构建使用随机 UUID（identity_mode=build-id），strict 使用完整 SHA-256（identity_mode=content-sha256）。哈希包含参数、输入内容、容器脚本和基础镜像 ID，不包含本地材料路径、基础镜像别名、报告路径、缓存与显示选项。在线依赖变化仍可能影响镜像内容。
 
 ## 镜像内部
 

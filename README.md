@@ -46,7 +46,7 @@ SoC 同样先精确匹配。若没有 `950` 的 ops 包且只有 `950dt` 或 `95
 --camodel-archive /data/models/456B2/x86_64_ESLMODEL_Ascend950DT_456B2_config.zip
 ```
 
-显式指定后只使用这两个包，忽略目录内其他 ZIP。省略全部 `--camodel-archive` 时自动查找 `camodel/*ESLMODEL*.zip`，该目录必须只有一套主包/配置包。普通构建每次生成新的构建 ID；`--strict` 构建使用内容指纹，包内容变化会改变 tag。
+显式指定后只使用这两个包，忽略目录内其他 ZIP。省略全部 `--camodel-archive` 时自动查找 `camodel/*ESLMODEL*.zip`，该目录必须只有一套主包/配置包。镜像 tag 按软件版本生成；同版本下切换 CAModel 会更新同一个 tag，具体材料由报告和镜像 ID 区分，`--strict` 额外记录内容指纹。
 
 切换 CAModel 时同时核对 `--soc`、`--simu-soc`、`--esl-soc-version` 和 `--esl-hardware-version` 是否适用于新包。仅有额外定制需求时再添加 `--camodel-init /data/models/456B2/init.sh`、`--camodel-env /data/models/456B2/env.sh` 或 `--camodel-check /data/models/456B2/check.sh`。这些都是可选文件，默认从材料根目录的 `camodel/` 读取，不会随 ZIP 的绝对路径自动切换。
 
@@ -179,10 +179,10 @@ python3 build.py \
 | --- | --- |
 | `--materials` | 显示下载入口和材料位置；文件缺失时也可使用 |
 | `--dry-run` | 展示参数和材料选择，不访问 Docker、不写文件；tag 暂不计算 |
-| `--check` | 快速检查材料和 Docker，不扫描内容哈希/ZIP CRC，不计算最终 tag |
-| `--check --files-only` | 快速检查材料，不访问 Docker，不扫描内容哈希/ZIP CRC |
-| `--check --strict` | 计算材料 SHA-256、完整检查 ZIP CRC，检查 Docker 并计算最终镜像名，不构建 |
-| `--check --files-only --strict` | 执行严格材料检查，不访问 Docker，不计算依赖基础镜像 ID 的最终 tag |
+| `--check` | 快速检查材料和 Docker，显示自动 tag，不扫描内容哈希/ZIP CRC |
+| `--check --files-only` | 快速检查材料并显示 tag，不访问 Docker，不扫描内容哈希/ZIP CRC |
+| `--check --strict` | 计算材料 SHA-256、完整检查 ZIP CRC，检查 Docker，显示 tag 和构建指纹，不构建 |
+| `--check --files-only --strict` | 严格检查材料并显示 tag，不访问 Docker，不计算依赖基础镜像 ID 的完整构建指纹 |
 
 `--materials`、`--dry-run`、`--check` 三种模式互斥。默认只根据文件名和文件属性定位材料，检查存在/非空、版本/ABI/架构及仿真包配对，不打开文件读取内容，不执行 ZIP 预检。`--strict` 才读取材料计算 SHA-256，并检查 ZIP 目录结构、路径/类型安全、跨包冲突及完整 CRC。镜像内实际解压仍执行路径检查及 Python 解压器自带的 CRC 检查。
 
@@ -235,11 +235,13 @@ CAModel 配对缺失会明确列出缺的是主包还是配置包，以及期望
 名称示意：
 
 ```text
-ascend-dev:npu-cann9.1.0-950-torch2.10.0_cpu-npu2.10.0.post4-py310-amd64-<ID12>
-ascend-sim:sim-cann9.1.0-950-torch2.10.0_cpu-npu2.10.0.post4-py310-amd64-<ID12>
+ascend-dev:npu-cann9.1.0-950-torch2.10.0_cpu-npu2.10.0.post4
+ascend-sim:sim-cann9.1.0-950dt-torch2.7.1_cpu-npu2.7.1.post5.dev20261111
 ```
 
-没有 `--tag` 或 `latest` 别名。普通构建的 `ID12` 来自随机 UUID，每次构建生成不同 tag，无需读取材料内容。`--strict` 下改用 SHA-256 指纹前 12 位，参数（含仿真初始化设置）、材料、容器脚本、共享 ZIP/初始化模块和基础镜像 ID 参与指纹；材料绝对路径、报告目录、缓存和显示选项不参与，相同基础镜像 ID 的引用别名得到同一个 tag。在线依赖源会变化，内容指纹不保证镜像逐字节可复现。
+没有 `--tag` 或 `latest` 别名。tag 保留目标、CANN、SoC、Torch/torch-npu 完整版本，包括 `.postN.dev日期`；`+` 转为 Docker 支持的 `_`。末尾不再附加 Python 版本、架构或构建 ID。同一组版本再次构建会更新同一个 tag；其他参数和材料变化通过构建报告、镜像 ID 及镜像的 `dev.ascend.input-fingerprint` 标签区分。
+
+普通构建用随机 UUID 记录构建身份，无需扫描材料内容。仅 `--strict` 使用 SHA-256 内容指纹，参数（含仿真初始化设置）、材料、容器脚本、共享 ZIP/初始化模块和基础镜像 ID 参与指纹，完整值保存在报告和镜像标签中；材料绝对路径、报告目录、缓存和显示选项不参与。在线依赖源会变化，内容指纹不保证镜像逐字节可复现。
 
 实际构建输出到 `build/<build-id>/`，可用 `--output-dir` 修改父目录：
 
