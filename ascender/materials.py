@@ -7,7 +7,7 @@ import hashlib
 from pathlib import Path
 import re
 
-from . import archives, wheels
+from . import archives, chips, wheels
 from .config import BuildConfig, clean_text
 from .errors import require
 
@@ -53,9 +53,10 @@ def choose(explicit: str, directory: Path, pattern: str, preview: bool) -> Path:
 def resolve(config: BuildConfig) -> Materials:
     root = config.materials_root.absolute()
     preview = config.mode in ("materials", "preview")
-    selected = Materials(
-        choose(config.toolkit, root / "cann", f"Ascend-cann-toolkit_{config.cann_version}_linux-x86_64.run", preview),
-        choose(config.ops, root / "cann", f"Ascend-cann-{config.soc}-ops_{config.cann_version}_linux-x86_64.run", preview))
+    toolkit = choose(config.toolkit, root / "cann", f"Ascend-cann-toolkit_{config.cann_version}_linux-x86_64.run", preview)
+    ops, config.soc = chips.resolve(config.soc, config.cann_version, root / "cann", config.ops,
+                                    fuzzy=not config.strict_soc, preview=preview)
+    selected = Materials(toolkit, ops)
     if not config.no_torch:
         selected.torch, config.torch_version = wheels.resolve(
             "torch", config.torch_version, root / "torch", config.torch_wheel,

@@ -200,6 +200,111 @@ class BuilderTests(unittest.TestCase):
         self.assertIn("torch-npu=2.10.0.post6", output)
         self.run_cli("--torch-npu-version", "2.10.0", "--allow-unverified", "--check", "--files-only")
 
+    def test_soc_family_resolves_case_insensitively_and_keeps_same_image(self):
+        original = next(self.cann.glob("*-ops_*.run"))
+        original.rename(original.with_name(original.name.replace("950-ops", "950DT-ops")))
+        output = self.run_cli("--check")
+        self.assertIn("Resolved SoC: 950 -> 950dt", output)
+        self.assertIn("SoC: 950dt", output)
+        self.assertIn("-950dt-", self.image_from(output))
+        self.assertEqual(self.image_from(output), self.image_from(self.run_cli("--soc", "950DT", "--check")))
+
+    def test_soc_family_ambiguity_warns_and_requires_model_or_file(self):
+        original = next(self.cann.glob("*-ops_*.run"))
+        dt = original.with_name(original.name.replace("950-ops", "950dt-ops"))
+        pr = original.with_name(original.name.replace("950-ops", "950pr-ops"))
+        original.rename(dt)
+        shutil.copyfile(dt, pr)
+        output = self.run_cli("--check", expected=1)
+        self.assertIn("WARNING: Multiple candidates for --soc 950", output)
+        self.assertIn(dt.name, output)
+        self.assertIn(pr.name, output)
+        self.assertIn("--ops", output)
+        self.assertFalse(Path(self.env["MOCK_LOG"]).exists())
+        self.run_cli("--soc", "950dt", "--check", "--files-only")
+        self.assertIn("-950pr-", self.image_from(self.run_cli("--ops", str(pr), "--check")))
+        self.assertIn("mismatch", self.run_cli("--soc", "950dt", "--ops", str(pr), "--check", expected=1))
+
+    def test_soc_exact_model_takes_priority_over_family_variants(self):
+        original = next(self.cann.glob("*-ops_*.run"))
+        for variant in ("950dt", "950pr"):
+            shutil.copyfile(original, original.with_name(original.name.replace("950-ops", variant + "-ops")))
+        output = self.run_cli("--check")
+        self.assertNotIn("WARNING", output)
+        self.assertNotIn("Resolved SoC", output)
+        self.assertIn("-950-", self.image_from(output))
+
+    def test_strict_soc_disables_family_fallback(self):
+        original = next(self.cann.glob("*-ops_*.run"))
+        dt = original.with_name(original.name.replace("950-ops", "950dt-ops"))
+        original.rename(dt)
+        self.assertIn("Missing ops installer", self.run_cli("--strict-soc", "--check", "--files-only", expected=1))
+        self.assertIn("mismatch", self.run_cli("--strict-soc", "--ops", str(dt), "--check", expected=1))
+        self.assertEqual(self.image_from(self.run_cli("--soc", "950dt", "--strict-soc", "--check")),
+                         self.image_from(self.run_cli("--check")))
+
+    def test_soc_family_preserves_model_version_and_architecture_boundaries(self):
+        original = next(self.cann.glob("*-ops_*.run"))
+        original.unlink()
+        for name in (original.name.replace("950-ops", "9500-ops"),
+                     original.name.replace("950-ops", "951dt-ops"),
+                     original.name.replace("950-ops", "950dt-ops").replace("9.1.0", "9.2.0"),
+                     original.name.replace("950-ops", "950dt-ops").replace("x86_64", "aarch64")):
+            with self.subTest(name=name):
+                candidate = self.cann / name
+                candidate.write_text("fixture installer")
+                self.assertIn("Missing ops installer", self.run_cli("--check", "--files-only", expected=1))
+                candidate.unlink()
+
+    def test_resolved_soc_is_recorded_in_manifest_and_tag(self):
+        original = next(self.cann.glob("*-ops_*.run"))
+        original.rename(original.with_name(original.name.replace("950-ops", "950pr-ops")))
+        self.run_cli()
+        report = self.reports()[0].parent
+        self.assertIn("soc=950pr\n", (report / "manifest.txt").read_text())
+        self.assertIn("-950pr-", (report / "image-ref.txt").read_text())
+
+    def development_wheels(self):
+        result = []
+        for package, old, version in (("torch", "2.10.0+cpu", "2.7.1+cpu"),
+                                       ("torch_npu", "2.10.0.post4", "2.7.1.post5.dev20261111")):
+            original = next(self.torch.glob(f"{package}-*"))
+            path = original.with_name(original.name.replace(old, version))
+            original.rename(path)
+            result.append(path)
+        return result
+
+    def test_post_dev_version_resolves_and_reaches_build_without_truncation(self):
+        self.development_wheels()
+        args = ["--torch-version", "2.7.1", "--torch-npu-version", "2.7.1"]
+        output = self.run_cli(*args, "--check", "--files-only", expected=1)
+        self.assertIn("Resolved torch-npu version: 2.7.1 -> 2.7.1.post5.dev20261111", output)
+        self.assertIn("Version combination is unrecorded", output)
+        output = self.run_cli(*args, "--allow-unverified")
+        report = self.reports()[0].parent
+        self.assertIn("torch_npu=2.7.1.post5.dev20261111\n", (report / "manifest.txt").read_text())
+        self.assertIn("npu2.7.1.post5.dev20261111-", (report / "image-ref.txt").read_text())
+        calls = [json.loads(line) for line in Path(self.env["MOCK_LOG"]).read_text().splitlines()]
+        self.assertTrue(any("TORCH_NPU_VERSION=2.7.1.post5.dev20261111" in call for call in calls))
+        self.assertEqual(self.image_from(output), self.image_from(self.run_cli(
+            "--torch-version", "2.7.1+cpu", "--torch-npu-version", "2.7.1.post5.dev20261111",
+            "--strict-versions", "--allow-unverified", "--check")))
+
+    def test_post_dev_date_ambiguity_requires_complete_version(self):
+        _, original = self.development_wheels()
+        other = original.with_name(original.name.replace("20261111", "20261112"))
+        shutil.copyfile(original, other)
+        args = ["--torch-version", "2.7.1", "--torch-npu-version", "2.7.1", "--allow-unverified"]
+        output = self.run_cli(*args, "--check", expected=1)
+        self.assertIn("WARNING: Multiple candidates", output)
+        self.assertIn("20261111", output)
+        self.assertIn("20261112", output)
+        self.assertFalse(Path(self.env["MOCK_LOG"]).exists())
+        self.run_cli(*args, "--torch-npu-version", "2.7.1.post5.dev20261111", "--check", "--files-only")
+        self.run_cli(*args, "--torch-npu-wheel", str(other), "--check", "--files-only")
+        self.assertIn("Missing compatible wheel", self.run_cli(
+            *args, "--torch-npu-version", "2.7.1.post5", "--check", "--files-only", expected=1))
+
     def test_full_post_version_cannot_be_bypassed(self):
         wrong = next(self.torch.glob("torch_npu*"))
         renamed = wrong.with_name(wrong.name.replace("post4", "post6"))

@@ -38,6 +38,8 @@ python3 build.py \
 
 Torch 版本默认先精确匹配，再按基础版本匹配后缀。例如上述 `2.10.0` 会在没有精确候选且只有一个匹配 wheel 时，分别解析为 `2.10.0+cpu` 和 `2.10.0.post4`，并显示解析结果。存在多个候选时输出 `WARNING`、列出候选并停止；可指定完整版本或 `--torch-wheel` / `--torch-npu-wheel` 精确路径。需要关闭基础版本匹配时追加 `--strict-versions`。
 
+SoC 同样先精确匹配。若没有 `950` 的 ops 包且只有 `950dt` 或 `950pr` 中的一种，`--soc 950` 会采用该具体型号；两种都存在时告警并停止，需要指定 `--soc 950dt` / `--soc 950pr` 或 `--ops FILE`。解析结果显示在终端并用于镜像命名；`--strict-soc` 可关闭型号回退。
+
 **指定不同的 CAModel：** 将上述两个 `--camodel-archive` 的值替换为需要的配对文件名即可，例如另一套包名为 `x86_64_ESLMODEL_Ascend950DT_456B2.zip` 和 `x86_64_ESLMODEL_Ascend950DT_456B2_config.zip`（以实际供应方文件为准）。相对路径以 `/data/ascend-materials/camodel/` 为基准；包位于其他目录时，直接使用绝对路径：
 
 ```text
@@ -151,9 +153,11 @@ python3 prepare_runtime.py --help
 - 优先级：默认值 → 列出的 `ASCEND_DEV_*` 环境变量 → CLI；重复标量以最后一次为准，列表按顺序追加。
 - 统一布局仅支持 `ROOT/cann/`、`ROOT/torch/`、`ROOT/camodel/`，不递归。旧的 `--cann-root`、`--torch-root`、`--camodel-dir` 已移除。
 - `--toolkit`、`--ops`、`--torch-wheel`、`--torch-npu-wheel` 可精确指定文件，优先于固定目录查找；仍校验原始文件名。多个匹配文件时报错。
-- Torch/torch-npu 默认优先匹配完整版本；无精确候选且输入为 `X.Y.Z` 时，允许匹配同一基础版本的 `.postN`、`+local` 后缀及二者组合。只在 cp310/x86_64 wheel 中选择，不跨基础版本、不自动选择 rc/dev 预发布包；已写出后缀的输入仍按完整版本匹配。
+- SoC 从指定 CANN 版本、linux/x86_64 的 ops 包名解析，大小写不敏感，输出统一小写。默认先精确匹配；纯数字型号（例如 `950`）可回退到紧随字母后缀的型号（例如 `950dt`、`950pr`），不会匹配 `9500` 或其他数字型号。多候选告警并停止；明确输入 `950dt` 时仅精确匹配，`--strict-soc` 对默认查找和显式 `--ops` 都禁用回退。
+- Torch/torch-npu 默认优先匹配完整版本；无精确候选且输入为 `X.Y.Z` 时，允许匹配同一基础版本的 `.postN`、`.postN.devN`、`+local` 及其组合。例如 `2.7.1` 可匹配 `2.7.1.post5.dev20261111`。只在 cp310/x86_64 wheel 中选择，不跨基础版本、不自动选择 rc 或独立 `.devN` 包；已写出后缀的输入仍按完整版本匹配（`2.7.1.post5` 不会隐式匹配 `2.7.1.post5.dev20261111`）。
 - 唯一候选会显示 `Resolved ... version: 输入 -> 完整版本`。多个候选输出 `WARNING` 并停止，不自动选择最大版本。完整版本仍对应多个平台构建时，使用精确 wheel 文件路径消除歧义。`--strict-versions` 关闭基础版本回退；它也适用于显式 wheel 路径。
 - 配套记录检查、镜像 tag、manifest、Docker 构建参数、pip 约束及安装后校验均使用解析后的完整版本。简写和完整版本选择同一文件时得到相同镜像名；模糊匹配不会绕过 `--allow-unverified` 所控制的配套检查。
+- `2.7.1.post5.dev20261111` 等开发版本尚未收录在配套记录中，需要显式 `--allow-unverified`；Torch 与 torch-npu 的基础版本仍须一致，例如都输入 `2.7.1`。多个开发日期会列出候选，需要指定完整日期版本或文件路径。
 - 通用相对路径以调用目录为基准；`--camodel-archive`、`--camodel-init`、`--camodel-env`、`--camodel-check` 的相对路径以 `ROOT/camodel/` 为基准，均支持绝对路径。
 - `--apt-mirror` 指定 Ubuntu 仓库基础 URL，`--pip-index` 指定 PIP 索引；不接受凭据、查询串或空白。
 - PIP 源写入所有用户可读的 `/etc/pip.conf`，root、developer 和后续用户默认共享；不持久化 `PIP_INDEX_URL`，允许按 pip 的优先级覆盖。构建检查 root 和非 root 均可读取。

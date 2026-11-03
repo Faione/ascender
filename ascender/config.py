@@ -25,6 +25,7 @@ class BuildConfig:
     base_image: str = "ubuntu:22.04"
     allow_unverified: bool = False
     strict_versions: bool = False
+    strict_soc: bool = False
     materials_root: Path = Path("materials")
     toolkit: str = ""
     ops: str = ""
@@ -63,7 +64,7 @@ class BuildConfig:
         require(self.network in ("default", "none"), "--network must be default or none.")
         require(self.progress in ("plain", "auto", "tty"), "--progress must be plain, auto or tty.")
         self.soc = self.soc.lower()
-        require(bool(re.fullmatch(r"[a-z0-9]+", self.soc)), "--soc must be a model such as 950 or 910b.")
+        require(bool(re.fullmatch(r"[a-z0-9]+", self.soc)), "--soc must be a model/family such as 950, 950dt or 910b.")
         require(bool(re.fullmatch(r"\d+\.\d+\.\d+[A-Za-z0-9._-]*", self.cann_version)),
                 "--cann-version requires an exact version, e.g. 9.1.0.")
         if self.no_torch:

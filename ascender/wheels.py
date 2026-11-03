@@ -20,9 +20,10 @@ def matches(requested: str, actual: str, fuzzy: bool) -> bool:
         return True
     if not fuzzy or not re.fullmatch(r"\d+\.\d+\.\d+", requested):
         return False
-    # A base release can select a post/local build, never another release or
-    # a prerelease. An explicitly supplied suffix always remains exact.
-    return bool(re.fullmatch(re.escape(requested) + r"(?:\.post[0-9]+)?(?:\+[A-Za-z0-9]+(?:[._][A-Za-z0-9]+)*)?", actual))
+    # A base release can select a post/local build, including dated post-dev
+    # builds. Explicit suffixes stay exact; standalone dev/rc are not selected.
+    suffix = r"(?:\.post[0-9]+(?:\.dev[0-9]+)?)?(?:\+[A-Za-z0-9]+(?:[._][A-Za-z0-9]+)*)?"
+    return bool(re.fullmatch(re.escape(requested) + suffix, actual))
 
 
 def resolve(package: str, requested: str, directory: Path, explicit: str = "", *,

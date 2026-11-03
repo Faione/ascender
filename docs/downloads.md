@@ -40,6 +40,10 @@ SoC 型号由 ops 包和实际设备确定。`950` 是参考示例；接受其�
 
 上表是实际安装的完整版本。命令行可写 `--torch-version 2.10.0 --torch-npu-version 2.10.0`，默认先精确匹配，无精确候选时尝试同一基础版本的 post/local 后缀；目录中分别只有上表对应的兼容 wheel 时，会自动解析成 `2.10.0+cpu`、`2.10.0.post4`。多候选会告警并停止，需要指定完整版本或精确 wheel 路径。配套检查使用解析结果，不会因输入简写跳过；`--strict-versions` 可禁用基础版本回退。
 
+也支持 `.postN.devN` 开发包，例如 `torch_npu-2.7.1.post5.dev20261111-cp310-cp310-manylinux_2_28_x86_64.whl` 可由 `--torch-npu-version 2.7.1` 匹配。Torch 基础版本应同为 `2.7.1`；该组合未收录，需 `--allow-unverified`。多日期候选须选择完整版本，工具不自动选最新日期。
+
+ops 安装包可使用实际型号文件名，例如 `Ascend-cann-950dt-ops_9.1.0_linux-x86_64.run`、`Ascend-cann-950pr-ops_9.1.0_linux-x86_64.run`。`--soc 950` 优先选择精确的 950 包，否则只在同一 CANN 版本和架构中匹配唯一的字母后缀型号；多个候选告警停止，可用 `--soc 950dt` 或 `--ops FILE` 明确选择。`--strict-soc` 禁用型号回退。
+
 ## 仿真脚本契约
 
 - 将 `x86_64_ESLMODEL_Ascend950DT_123A1.zip` 与 `x86_64_ESLMODEL_Ascend950DT_123A1_config.zip` 保持原名放到 `ROOT/camodel/`。默认按文件名顺序查找 `*ESLMODEL*.zip`，要求一对同名主包/配置包；不递归、不选其他 ZIP。多套材料时使用两次 `--camodel-archive FILE` 明确选定一对，按参数顺序处理。型号和版本以实际供应方文件名为准，不从 CANN 版本推导。

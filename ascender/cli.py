@@ -16,11 +16,14 @@ def build_options(argv=None):
                                     ("cann-version", "", None), ("torch-version", "", None),
                                     ("torch-npu-version", "", None), ("base-image", "ubuntu:22.04", None)):
         help_text = f"Default: {default}" if default else ("Base or full version; required unless --no-torch" if flag.startswith("torch") else "Required")
+        if flag == "soc":
+            help_text = "SoC model/family, e.g. 950, 950dt or 950pr (required)"
         environment.add_argument(f"--{flag}", default=os.environ.get("ASCEND_DEV_" + flag.upper().replace("-", "_")) or default,
                                  choices=choices, help=help_text)
     environment.add_argument("--no-torch", action="store_true", help="CANN-only image; omit all Torch options")
     environment.add_argument("--allow-unverified", action="store_true", help="Allow an undocumented software combination")
     environment.add_argument("--strict-versions", action="store_true", help="Require exact Torch/torch-npu versions; disable base-version fallback")
+    environment.add_argument("--strict-soc", action="store_true", help="Require an exact SoC model; disable numeric-family fallback")
     local = parser.add_argument_group("local materials: ROOT/cann, ROOT/torch, ROOT/camodel")
     local.add_argument("--materials-root", type=Path, default=Path(os.environ.get("ASCEND_DEV_MATERIALS_ROOT") or "materials"), help="Default: ./materials")
     for flag in ("toolkit", "ops", "torch-wheel", "torch-npu-wheel"):
