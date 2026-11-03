@@ -1,0 +1,131 @@
+"""Fast checks must not scan file content; strict checks retain deep validation."""
+import contextlib
+import io
+from pathlib import Path
+import tempfile
+import unittest
+from unittest.mock import MagicMock, patch
+import zipfile
+
+from ascender import context, materials
+from ascender.builder import build
+from ascender.config import BuildConfig
+from ascender.errors import ToolError
+from ascender.image import Image, identify
+
+
+class CheckModeTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="ascender checks ")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        (self.root / "cann").mkdir()
+        (self.root / "camodel").mkdir()
+        for name in ("Ascend-cann-toolkit_9.1.0_linux-x86_64.run", "Ascend-cann-950-ops_9.1.0_linux-x86_64.run"):
+            (self.root / "cann" / name).write_bytes(b"fixture")
+        self.main = self.root / "camodel/x86_64_ESLMODEL_Ascend950DT_123A1.zip"
+        self.other = self.main.with_name(self.main.stem + "_config.zip")
+        for path, name in ((self.main, "model.bin"), (self.other, "model.conf")):
+            with zipfile.ZipFile(path, "w") as package:
+                package.writestr(name, b"payload")
+        self.docker = MagicMock()
+        self.docker.base_image.return_value = "sha256:base"
+        self.docker.image_id.return_value = "sha256:base"
+        self.docker.build.return_value = "sha256:output"
+        self.docker.container.return_value.__enter__.return_value = "stopped"
+        self.docker.copy.side_effect = lambda container, source, target: target.write_text("inventory")
+        self.backend = MagicMock(return_value=self.docker)
+
+    def config(self, **overrides):
+        settings = dict(mode="check", files_only=True, target="simulation", soc="950", cann_version="9.1.0",
+                        no_torch=True, materials_root=self.root, output_dir=self.root / "reports")
+        settings.update(overrides)
+        return BuildConfig(**settings)
+
+    def run_build(self, **options):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            build(self.config(**options), backend=self.backend)
+        return output.getvalue()
+
+    def test_default_files_check_skips_hashes_crc_and_zip_payload_reads(self):
+        with patch("ascender.materials.digest", side_effect=AssertionError("hash scan")), \
+                patch.object(zipfile.ZipFile, "testzip", side_effect=AssertionError("CRC scan")), \
+                patch.object(zipfile.ZipFile, "open", side_effect=AssertionError("ZIP payload scan")):
+            output = self.run_build()
+        self.assertIn("fast (SHA-256 and ZIP CRC skipped)", output)
+        self.backend.assert_not_called()
+        self.assertFalse((self.root / "reports").exists())
+
+    def test_default_docker_check_does_not_calculate_final_image_name(self):
+        with patch("ascender.materials.digest", side_effect=AssertionError("hash scan")), \
+                patch("ascender.builder.identify", side_effect=AssertionError("unhashed identity")):
+            output = self.run_build(files_only=False)
+        self.assertIn("Image: pending", output)
+        self.assertIn("--check --strict", output)
+        self.docker.base_image.assert_called_once()
+        self.docker.build.assert_not_called()
+        self.docker.container.assert_not_called()
+
+    def test_strict_files_check_hashes_inputs_and_scans_zip_crcs(self):
+        crc_calls = []
+        testzip = zipfile.ZipFile.testzip
+
+        def checked_crc(package):
+            crc_calls.append(Path(package.filename))
+            return testzip(package)
+
+        with patch("ascender.materials.digest", wraps=materials.digest) as hashing, \
+                patch.object(zipfile.ZipFile, "testzip", checked_crc):
+            output = self.run_build(strict=True)
+        self.assertGreaterEqual(hashing.call_count, 4)
+        self.assertEqual(crc_calls, [self.main, self.other])
+        self.assertIn("strict (SHA-256 + ZIP CRC)", output)
+        self.backend.assert_not_called()
+
+    def test_strict_docker_check_computes_final_tag_without_building(self):
+        output = self.run_build(strict=True, files_only=False)
+        self.assertIn("Image: ascend-sim:", output)
+        self.assertNotIn("Image: pending", output)
+        self.docker.build.assert_not_called()
+
+    def test_corrupt_payload_is_detected_only_by_strict_check(self):
+        with zipfile.ZipFile(self.main) as package:
+            member = package.getinfo("model.bin")
+            offset = member.header_offset + 30 + len(member.filename.encode()) + len(member.extra)
+        with self.main.open("r+b") as output:
+            output.seek(offset)
+            output.write(b"X")
+        self.run_build()
+        with self.assertRaisesRegex(ValueError, "Invalid ZIP"):
+            self.run_build(strict=True)
+
+    def test_default_check_still_rejects_unsafe_archive_paths(self):
+        with zipfile.ZipFile(self.main, "w") as package:
+            package.writestr("../outside", b"payload")
+        with self.assertRaisesRegex(ValueError, "Unsafe ZIP entry"):
+            self.run_build()
+
+    def test_build_still_hashes_for_identity_without_extra_crc_pass(self):
+        with patch("ascender.materials.digest", wraps=materials.digest) as hashing, \
+                patch.object(zipfile.ZipFile, "testzip", side_effect=AssertionError("extra CRC pass")):
+            self.run_build(mode="build", files_only=False)
+        self.assertGreaterEqual(hashing.call_count, 4)
+        report = next((self.root / "reports").iterdir())
+        self.assertTrue((report / "image-ref.txt").is_file())
+        for line in (report / "materials.sha256").read_text().splitlines():
+            self.assertRegex(line, r"^[0-9a-f]{64}  ")
+
+    def test_unhashed_inputs_cannot_be_used_for_identity_or_staging(self):
+        config = self.config()
+        selected = materials.resolve(config)
+        inputs = [materials.Input(self.main, "camodel/main.zip")]
+        with self.assertRaisesRegex(ToolError, "Content hashes are unavailable"):
+            identify(config, selected, inputs, "sha256:base")
+        with self.assertRaisesRegex(ToolError, "requires content hashes"):
+            with context.stage(config, selected, inputs, Image("ref", "hash", "", ""), ""):
+                self.fail("Unhashed materials must not reach staging")
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -36,7 +36,7 @@ python3 build.py \
   --camodel-archive x86_64_ESLMODEL_Ascend950DT_123A1_config.zip
 ```
 
-首次使用可先在上述命令末尾追加 `--check --files-only` 仅检查材料，或追加 `--check` 同时检查 Docker；检查通过后移除这些选项进行构建。若已准备仿真自检脚本，可追加 `--camodel-check check.sh`。
+首次使用可先在上述命令末尾追加 `--check --files-only` 快速检查材料，或追加 `--check` 同时检查 Docker；默认不扫描全文件 SHA-256 和 ZIP CRC。需要深度检查时再追加 `--strict`，例如 `--check --files-only --strict`。检查通过后移除检查选项进行构建。若已准备仿真自检脚本，可追加 `--camodel-check check.sh`。
 
 Torch 版本默认先精确匹配，再按基础版本匹配后缀。例如上述 `2.10.0` 会在没有精确候选且只有一个匹配 wheel 时，分别解析为 `2.10.0+cpu` 和 `2.10.0.post4`，并显示解析结果。存在多个候选时输出 `WARNING`、列出候选并停止；可指定完整版本或 `--torch-wheel` / `--torch-npu-wheel` 精确路径。需要关闭基础版本匹配时追加 `--strict-versions`。
 
@@ -182,10 +182,16 @@ python3 build.py \
 | --- | --- |
 | `--materials` | 显示下载入口和材料位置；文件缺失时也可使用 |
 | `--dry-run` | 展示参数和材料选择，不访问 Docker、不写文件；tag 暂不计算 |
-| `--check` | 检查材料和 Docker，计算镜像名，不构建 |
-| `--check --files-only` | 只检查材料，不访问 Docker |
+| `--check` | 快速检查材料和 Docker，不扫描内容哈希/ZIP CRC，不计算最终 tag |
+| `--check --files-only` | 快速检查材料，不访问 Docker，不扫描内容哈希/ZIP CRC |
+| `--check --strict` | 计算材料 SHA-256、完整检查 ZIP CRC，检查 Docker 并计算最终镜像名，不构建 |
+| `--check --files-only --strict` | 执行严格材料检查，不访问 Docker，不计算依赖基础镜像 ID 的最终 tag |
 
-三种模式互斥。正常构建自动执行完整检查。宿主机检查文件名、版本、ABI、架构、仿真包配对、ZIP 安全及 CRC，不执行安装器或供应方脚本；包内部及安装后检查在容器内执行。
+`--materials`、`--dry-run`、`--check` 三种模式互斥。默认快速检查包括文件存在/非空/可读、文件名版本/ABI/架构、仿真包配对，以及 ZIP 目录结构、路径/类型安全和跨包冲突；只读少量文件数据和 ZIP 目录元数据，不校验所有压缩内容。文件内容损坏需要 `--strict` 的 CRC 扫描或实际解压才能发现。
+
+`--strict` 用于 `--check` 或实际构建，表示启用昂贵的内容检查，与控制模糊匹配的 `--strict-versions`、`--strict-soc` 相互独立。`--strict` 不改变版本/型号选择，也不参与镜像指纹。严格模式计算的 SHA-256 是本地内容指纹，并非上游来源认证。
+
+实际构建始终计算 SHA-256，并在复制上下文后重新核对，用于自动 tag 和防止材料变化；默认不额外扫描 ZIP CRC，添加 `--strict` 才在构建前完整扫描。镜像内解压时随读取自然校验成员 CRC，不再提前额外解压一遍。宿主机不执行安装器或供应方脚本；包内部及安装后检查在容器内执行。
 
 ## 参数规则
 

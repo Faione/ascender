@@ -32,6 +32,7 @@ class BuildConfig:
     allow_unverified: bool = False
     strict_versions: bool = False
     strict_soc: bool = False
+    strict: bool = False
     materials_root: Path = Path("materials")
     toolkit: str = ""
     ops: str = ""
@@ -80,6 +81,7 @@ class BuildConfig:
                 clean_text(str(item))
         require(self.target in ("npu", "simulation"), "--target must be npu or simulation.")
         require(self.mode in ("build", "materials", "preview", "check"), "Invalid operation mode.")
+        require(not self.strict or self.mode in ("build", "check"), "--strict applies to --check or an actual build.")
         require(self.network in ("default", "none"), "--network must be default or none.")
         require(self.progress in ("plain", "auto", "tty"), "--progress must be plain, auto or tty.")
         self.soc = self.soc.lower()

@@ -58,7 +58,7 @@ Torch/NPU 在 cp310/x86_64 wheel 中先精确匹配；没有精确候选时，�
 
 仿真默认扫描当前 `camodel/` 的 `*ESLMODEL*.zip`，需要一对 `x86_64_ESLMODEL_<model>_<version>.zip` 和同名 `_config.zip`。例如 `x86_64_ESLMODEL_Ascend950DT_123A1.zip` 及其配置包。多套材料时报错，可显式重复 `--camodel-archive` 选择一对。配对校验不推断仿真包与 CANN/SoC 的兼容关系。
 
-ZIP 预检所有包的 CRC、路径、类型及合并后的命名空间；允许共享目录，拒绝重复文件、文件/目录冲突、符号链接和路径穿越。所有包直接解压到 `/opt/CAModel/`，保留包内层级及文件执行位，不套包名目录。
+ZIP 默认只预检目录元数据、路径、类型及合并后的命名空间；允许共享目录，拒绝重复文件、文件/目录冲突、符号链接和路径穿越。`--strict` 才在宿主机扫描所有成员的 CRC。所有包直接解压到 `/opt/CAModel/`，保留包内层级及文件执行位，不套包名目录；解压读取本身会校验 CRC，因此不再额外执行一遍全量解压预检。
 
 内置 simulation 模块在镜像内查找 CANN `x86_64-linux/simulator/<soc_version>/lib/libruntime_camodel.so`，默认使用活动 CANN 安装目录及解析后的 SoC（允许 Ascend 前缀别名）。通过唯一的 `libnpu_drv_camodel.so` 定位 CAModel 库目录，复制替换运行库、创建两个相对软链接，并在同一目录生成 set_env.sh。路径不唯一或缺失立即报错；目录和型号可显式配置。
 
@@ -69,7 +69,7 @@ set_env.sh 固定 ASCEND_DEVICE_ID=0；ESL_HARDWARE_VERSION 默认 0x1000，由 
 ## 构建流程与资源
 
 1. CLI 解析，配置对象校验；正常构建建立报告目录。
-2. 材料模块定位并解析型号与 wheel 完整版本，校验材料并生成包含源路径、逻辑路径和 SHA-256 的输入清单；随后配置模块校验配套记录。
+2. 材料模块定位并解析型号与 wheel 完整版本，校验材料并生成输入清单；随后配置模块校验配套记录。普通 check 的清单只含源路径/逻辑路径，SHA-256 为空；strict check 和实际构建才计算内容哈希。
 3. Docker 适配器检查本地 context、Engine builder、基础镜像架构和不可变 ID。
 4. 镜像模块计算名称，报告模块记录参数、指纹和哈希。
 5. 上下文模块暂存选定输入并再次核对哈希。
@@ -77,6 +77,10 @@ set_env.sh 固定 ASCEND_DEVICE_ID=0；ESL_HARDWARE_VERSION 默认 0x1000，由 
 7. 再次确认基础镜像未移动，用未启动容器导出包清单；只有全部成功才发布 image-ref.txt。
 
 所有临时目录和容器使用上下文管理器清理；SIGINT/SIGTERM 经过退出边界触发 finally。失败记录退出码与阶段，保留构建日志。不执行 Docker 全局 prune，不使用业务容器执行检查。
+
+默认 `--check` / `--check --files-only` 使用快速模式，不扫描大文件哈希或 ZIP 内容 CRC。前者检查 Docker 后显示镜像名待计算，后者不访问 Docker；`--check --strict` 才能计算最终 tag。文件/ZIP 元数据安全检查两种模式都保留，输出明确标注 fast/strict。镜像身份和上下文模块拒绝没有内容哈希的输入，防止快速检查元数据被误用于最终 tag。
+
+实际构建仍始终计算内容哈希并复制后复核，这是自动命名的输入契约；`--strict` 对实际构建额外启用 ZIP CRC 预扫描。检查强度开关不参与指纹，也不影响版本模糊匹配开关。
 
 名称包含目标、CANN、SoC、完整 Torch/NPU 版本、py310、amd64 和 SHA-256 前 12 位；不提供自定义 tag。哈希包含参数、输入内容、容器脚本和基础镜像 ID，不包含本地材料路径、基础镜像别名、报告路径、缓存与显示选项。在线依赖变化仍可能影响镜像内容。
 

@@ -18,6 +18,8 @@ class Image:
 
 
 def identify(config: BuildConfig, selected: Materials, inputs: list[Input], base_id: str) -> Image:
+    require(all(item.sha256 is not None for item in inputs),
+            "Content hashes are unavailable; use --check --strict to calculate the final image name.")
     parameters = {
         "target": config.target, "soc": config.soc, "cann": config.cann_version,
         "torch": config.torch_version, "torch_npu": config.torch_npu_version,

@@ -24,8 +24,8 @@ def members(package):
         yield member, path
 
 
-def validate(archives):
-    """Read CRCs and validate the merged namespace before writing any archive content."""
+def validate(archives, *, crc=False):
+    """Validate ZIP metadata and merged paths; scan payload CRCs only on request."""
     paths = {}
     for archive in archives:
         try:
@@ -38,15 +38,18 @@ def validate(archives):
                     if path in paths and not (paths[path] and member.is_dir()):
                         raise ValueError(f"Conflicting ZIP entry: {path}")
                     paths[path] = member.is_dir()
-                corrupt = package.testzip()
-                if corrupt:
-                    raise ValueError(f"Invalid ZIP CRC: {archive}: {corrupt}")
+                if crc:
+                    corrupt = package.testzip()
+                    if corrupt:
+                        raise ValueError(f"Invalid ZIP CRC: {archive}: {corrupt}")
         except (zipfile.BadZipFile, RuntimeError, NotImplementedError) as error:
             raise ValueError(f"Invalid ZIP: {archive}: {error}") from error
 
 
 def extract(archives, destination):
     """Merge into a fresh installation tree; preserve executable bits, refuse overwrites."""
+    # Extraction itself reads each member and checks its CRC; avoid a full
+    # decompression pass before extracting. All paths are still preflighted.
     validate(archives)
     destination = Path(destination)
     destination.mkdir(parents=True, exist_ok=True)

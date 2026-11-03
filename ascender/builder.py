@@ -18,17 +18,25 @@ def build(config, backend=Docker.local):
             reporting.show_plan(config, selected)
             print("Image: pending (input hashes and local base image ID are resolved at check/build time)")
             return
+        if config.mode == "check":
+            level = "strict (SHA-256 + ZIP CRC)" if config.strict else "fast (SHA-256 and ZIP CRC skipped)"
+            print(f"Validation: {level}", flush=True)
         inputs = materials.collect(config, selected)
         config.validate_compatibility()
         if config.files_only:
+            reporting.show_plan(config, selected)
             print("PASS: local materials (package execution/ABI checks deferred to Docker).")
             return
         if report:
             report.phase = "docker"
         docker = backend()
         base_id = docker.base_image(config.base_image)
-        image = identify(config, selected, inputs, base_id)
         reporting.show_plan(config, selected)
+        if config.mode == "check" and not config.strict:
+            print("Image: pending (content hashes skipped; use --check --strict to calculate the final tag)")
+            print("PASS: materials and local Docker builder; image not built.")
+            return
+        image = identify(config, selected, inputs, base_id)
         print(f"Image: {image.reference}")
         if config.mode == "check":
             print("PASS: materials and local Docker builder; image not built.")

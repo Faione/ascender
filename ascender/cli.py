@@ -52,10 +52,11 @@ def build_options(argv=None):
     modes = parser.add_mutually_exclusive_group()
     for flag, mode, help_text in (("materials", "materials", "Show download/storage guidance without Docker"),
                                   ("dry-run", "preview", "Preview without Docker or file writes"),
-                                  ("check", "check", "Validate without building")):
+                                  ("check", "check", "Fast material/Docker checks without building; add --strict for content checks")):
         modes.add_argument(f"--{flag}", dest="mode", action="store_const", const=mode, help=help_text)
     parser.set_defaults(mode="build")
     parser.add_argument("--files-only", action="store_true", help="With --check: do not access Docker")
+    parser.add_argument("--strict", action="store_true", help="Enable SHA-256 and ZIP CRC for --check; add ZIP CRC preflight to builds (builds always hash for image identity)")
     return BuildConfig(**vars(parser.parse_args(argv)))
 
 

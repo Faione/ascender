@@ -11,6 +11,7 @@ from .materials import digest
 
 @contextmanager
 def stage(config, selected, inputs, image, manifest):
+    require(all(item.sha256 is not None for item in inputs), "Build context requires content hashes for all inputs.")
     with tempfile.TemporaryDirectory(prefix="ascend-dev.") as directory:
         root = Path(directory)
         for name in ("packages", "config", "camodel/archives"):
