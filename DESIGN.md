@@ -21,9 +21,10 @@
 | `chips.py` | 将 SoC 具体型号或数字系列解析为唯一 ops 安装包 | 型号匹配策略变化 |
 | `wheels.py` | 将 Torch/NPU 完整或基础版本解析为唯一的兼容 wheel | wheel 文件名、版本匹配策略变化 |
 | `simulation.py` | 镜像内替换 CAModel 运行库、建立链接并生成环境脚本 | 仿真初始化步骤变化；独立标准库模块 |
+| `python_deps.py` | 镜像内读取安装元数据、提取 CANN 依赖及记录包清单 | 声明式依赖处理；独立标准库模块 |
 | `archives.py` | ZIP 安全校验及解压 | 压缩包格式处理变化；宿主机/容器共用 |
-| `image.py` | 根据参数、输入哈希、基础镜像 ID 计算镜像身份 | 自动 tag 或指纹规则变化 |
-| `context.py` | 临时构建上下文和复制后哈希校验 | 材料传入 Docker 的方式变化 |
+| `image.py` | 自动生成构建 ID；strict 下根据内容生成指纹 | 自动 tag 或指纹规则变化 |
+| `context.py` | 临时构建上下文；仅 strict 复制后校验哈希 | 材料传入 Docker 的方式变化 |
 | `docker.py` | Docker CLI 执行、日志流、基础镜像检查和临时容器 | 更换容器后端 |
 | `reporting.py` | 计划、下载指导和构建报告 | 日志/报告格式变化 |
 | `builder.py` | 按阶段协调构建流程 | 构建步骤顺序变化 |
@@ -34,7 +35,7 @@
 
 依赖方向：入口 → CLI → 工作流 → 专项模块。专项模块不导入 CLI 或工作流；`compose` 不访问 Docker/磁盘，`image` 不执行命令，`accounts` 不读取宿主机账号库。构建/运行工作流通过 `backend` 工厂接收 Docker 适配器，便于替换及独立测试；不引入插件注册器、泛化框架或第三方 SDK。
 
-ZIP 与初始化模块仅依赖标准库，构建时按 `scripts/archives.py`、`scripts/simulation.py` 暂存到上下文，通过现有 Dockerfile 的脚本 COPY 进入镜像。宿主机材料检查与容器解压使用同一份实现，源码参与输入指纹。
+ZIP 与初始化模块仅依赖标准库，构建时按 `scripts/archives.py`、`scripts/simulation.py` 暂存到上下文，通过现有 Dockerfile 的脚本 COPY 进入镜像。strict 材料检查与容器解压使用同一份实现，源码仅在 strict 下参与内容指纹。
 
 ## 输入契约
 
@@ -53,13 +54,13 @@ SoC 由 chips 模块从所选 CANN 版本、linux/x86_64 的 ops 文件名解析
 
 Torch/NPU 在 cp310/x86_64 wheel 中先精确匹配；没有精确候选时，基础版本 X.Y.Z 可匹配 `.postN`、`.postN.devN`、`+local` 及其组合，不匹配其他基础版本、rc 或独立 dev 包。例如 2.7.1 → 2.7.1.post5.dev20261111。显式完整后缀仍严格匹配。唯一候选解析为文件中的完整版本；多个候选打印 WARNING 和路径后停止，不选最新、不交互等待。通过完整版本或精确 wheel 路径明确选择，也可用 `--strict-versions` 禁用基础版本回退。
 
-配置模块检查输入格式；材料定位依次从 Toolkit、ops、wheel 文件名识别 CANN 版本、SoC 和框架完整版本，并写回本次构建配置。型号/版本参数可省略；显式值只作为筛选条件。唯一候选直接使用，多候选告警停止。解析后检查 Torch/NPU 基础版本一致性，Toolkit 与 ops 必须同 CANN 版本。后续 tag、指纹、manifest、Docker 参数及安装检查使用实际解析值，匹配开关和输入简写不参与指纹，因此相同文件得到相同名称。
+配置模块检查输入格式；材料定位依次从 Toolkit、ops、wheel 文件名识别 CANN 版本、SoC 和框架完整版本，并写回本次构建配置。型号/版本参数可省略；显式值只作为筛选条件。唯一候选直接使用，多候选告警停止。解析后检查 Torch/NPU 基础版本一致性，Toolkit 与 ops 必须同 CANN 版本。后续 tag、指纹、manifest、Docker 参数及安装检查使用实际解析值。strict 下，匹配开关和输入简写不参与内容指纹，相同文件得到相同名称。
 
 材料缺失由共享错误格式列出组件、期望值、搜索位置、可见候选和修复参数。CAModel 缺少配对文件时明确指出主包/配置包及对应文件名。缺失与不匹配均依据选中材料报告，不维护固定版本组合名单。
 
 仿真默认扫描当前 `camodel/` 的 `*ESLMODEL*.zip`，需要一对 `x86_64_ESLMODEL_<model>_<version>.zip` 和同名 `_config.zip`。例如 `x86_64_ESLMODEL_Ascend950DT_123A1.zip` 及其配置包。多套材料时报错，可显式重复 `--camodel-archive` 选择一对。配对校验不推断仿真包与 CANN/SoC 的兼容关系。
 
-ZIP 默认只预检目录元数据、路径、类型及合并后的命名空间；允许共享目录，拒绝重复文件、文件/目录冲突、符号链接和路径穿越。`--strict` 才在宿主机扫描所有成员的 CRC。所有包直接解压到 `/opt/CAModel/`，保留包内层级及文件执行位，不套包名目录；解压读取本身会校验 CRC，因此不再额外执行一遍全量解压预检。
+ZIP 仅在 `--strict` 下进行宿主机预检，包括目录元数据、路径、类型、合并后的命名空间及所有成员 CRC。普通构建直接暂存安装包，不打开 ZIP。所有包在镜像内直接解压到 `/opt/CAModel/`，解压时仍检查路径，允许共享目录，拒绝重复文件、文件/目录冲突、符号链接和路径穿越；读取本身会校验 CRC，不额外全量解压扫描。
 
 内置 simulation 模块在镜像内查找 CANN `x86_64-linux/simulator/<soc_version>/lib/libruntime_camodel.so`，默认使用活动 CANN 安装目录及解析后的 SoC（允许 Ascend 前缀别名）。通过唯一的 `libnpu_drv_camodel.so` 定位 CAModel 库目录，复制替换运行库、创建两个相对软链接，并在同一目录生成 set_env.sh。路径不唯一或缺失立即报错；目录和型号可显式配置。
 
@@ -70,26 +71,30 @@ set_env.sh 固定 ASCEND_DEVICE_ID=0；ESL_HARDWARE_VERSION 默认 0x1000，由 
 ## 构建流程与资源
 
 1. CLI 解析，配置对象校验；正常构建建立报告目录。
-2. 材料模块定位并解析型号与 wheel 完整版本，校验材料并生成输入清单；解析后检查框架基础版本一致性。普通 check 的清单只含源路径/逻辑路径，SHA-256 为空；strict check 和实际构建才计算内容哈希。
+2. 材料模块定位并解析型号与 wheel 完整版本，生成输入清单；解析后检查框架基础版本一致性。只有 strict 才计算内容哈希并执行 ZIP 预检，普通 check 和普通构建都不扫描内容。
 3. Docker 适配器检查本地 context、Engine builder、基础镜像架构和不可变 ID。
-4. 镜像模块计算名称，报告模块记录参数、指纹和哈希。
-5. 上下文模块暂存选定输入并再次核对哈希。
+4. 镜像模块生成名称，报告模块记录参数、命名模式与校验状态；strict 才记录材料哈希。
+5. 上下文模块暂存选定输入，仅 strict 再次核对哈希。
 6. Docker 适配器执行 buildx --load --pull=false，逐块输出日志。
-7. 再次确认基础镜像未移动，用未启动容器导出包清单；只有全部成功才发布 image-ref.txt。
+7. strict 再次确认基础镜像未移动；用未启动容器导出包清单，只有全部成功才发布 image-ref.txt。
 
 所有临时目录和容器使用上下文管理器清理；SIGINT/SIGTERM 经过退出边界触发 finally。失败记录退出码与阶段，保留构建日志。不执行 Docker 全局 prune，不使用业务容器执行检查。
 
-默认 `--check` / `--check --files-only` 使用快速模式，不扫描大文件哈希或 ZIP 内容 CRC。前者检查 Docker 后显示镜像名待计算，后者不访问 Docker；`--check --strict` 才能计算最终 tag。文件/ZIP 元数据安全检查两种模式都保留，输出明确标注 fast/strict。镜像身份和上下文模块拒绝没有内容哈希的输入，防止快速检查元数据被误用于最终 tag。
+默认 `--check` / `--check --files-only` 使用快速模式，只定位材料并检查文件属性与命名，不读取文件内容或 ZIP 元数据。前者检查 Docker 后显示镜像名待生成，后者不访问 Docker；`--check --strict` 才计算内容 tag。镜像身份和上下文模块仅在 strict 下要求全部材料具备内容哈希。
 
-实际构建仍始终计算内容哈希并复制后复核，这是自动命名的输入契约；`--strict` 对实际构建额外启用 ZIP CRC 预扫描。检查强度开关不参与指纹，也不影响版本模糊匹配开关。
+实际构建默认不计算或比对哈希，不执行 ZIP 预检，直接复制并安装；只有 `--strict` 启用内容扫描与暂存比对。不生成空的或伪造的 materials.sha256，报告明确记录 integrity_validation=skipped/strict。strict 不影响版本模糊匹配。
 
-名称包含目标、CANN、SoC、完整 Torch/NPU 版本、py310、amd64 和 SHA-256 前 12 位；不提供自定义 tag。哈希包含参数、输入内容、容器脚本和基础镜像 ID，不包含本地材料路径、基础镜像别名、报告路径、缓存与显示选项。在线依赖变化仍可能影响镜像内容。
+名称包含目标、CANN、SoC、完整 Torch/NPU 版本、py310、amd64 和 12 位 ID；不提供自定义 tag。普通构建使用随机 UUID，identity_mode=build-id，每次构建生成新 tag。strict 使用 SHA-256 前 12 位，identity_mode=content-sha256；哈希包含参数、输入内容、容器脚本和基础镜像 ID，不包含本地材料路径、基础镜像别名、报告路径、缓存与显示选项。在线依赖变化仍可能影响镜像内容。
 
 ## 镜像内部
 
 沿用一个多 target Dockerfile：`system-deps → cann → cann-only/torch-install → dev-common → npu/simulation`。仿真无需先构建 NPU 镜像；共有层复用缓存。原始安装材料通过只读 RUN mount 消费，不写入最终镜像层。
 
-公共环境入口兼容 CANN 的 set_env.sh，恢复调用者的 nounset 状态，避免重复加载。--mirror-url（或 ASCEND_DEV_MIRROR_URL）统一指定镜像源，默认 http://mirrors.tools.huawei.com，APT/pip 分别追加 /ubuntu、/pypi/simple；Docker 仅传入 MIRROR_URL 构建参数。pip 源写入 /etc/pip.conf，HTTP 源同时配置 trusted-host，所有当前/未来用户共享，运行期仍遵循 pip 标准覆盖规则。构建校验编译器、核心版本、CPU Torch 和普通用户可读性，不导入 torch_npu，不用硬件可用性作为构建条件。
+公共环境入口兼容 CANN 的 set_env.sh，恢复调用者的 nounset 状态，避免重复加载。--mirror-url（或 ASCEND_DEV_MIRROR_URL）统一指定镜像源，默认 http://mirrors.tools.huawei.com，APT/pip 分别追加 /ubuntu、/pypi/simple。pip 源写入 /etc/pip.conf，HTTP 源同时配置 trusted-host，所有当前/未来用户共享，运行期仍遵循 pip 标准覆盖规则。仅 strict 校验编译器、核心版本、CPU Torch 和普通用户可读性，不导入 torch_npu，不用硬件可用性作为构建条件。STRICT 构建参数传入共享层，控制安装器显式 --check 和安装后验证；不写入运行期 ENV。
+
+Python 依赖没有固定开发工具包名单，也没有统一 numpy<2 限制。python_deps 在 CANN 安装前记录 Python 包版本及 Requires-Dist，安装后加载 CANN 环境，再提取新增/变更包的声明。原始依赖表达式写入 /etc/ascend/cann-requirements.txt，由 pip 处理版本范围、extras 和环境条件。Torch wheel 自身依赖通过正常 pip 安装解析；后续补齐 CANN 声明及用户 --pip-package 时约束已选 Torch 版本。没有元数据的依赖由用户显式补充，不猜测包名。
+
+scripts 中保留各安装阶段的 install-system/install-cann/install-torch、公共收尾 finish-image、CAModel 初始化 prepare-simulation、运行入口 entrypoint/shell-env，以及仅 strict 调用的 verify-image。它们均有调用用途；移除预装开发包、固定 NumPy 上限和 verify-image 中的清单记录代码。普通构建仍通过 python_deps 的 inventory 动作记录包清单，仿真初始化后再刷新，记录过程不触发验证。
 
 ## 运行配置与权限
 

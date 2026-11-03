@@ -100,27 +100,65 @@ class CheckModeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Invalid ZIP"):
             self.run_build(strict=True)
 
-    def test_default_check_still_rejects_unsafe_archive_paths(self):
+    def test_zip_preflight_runs_only_in_strict_mode(self):
         with zipfile.ZipFile(self.main, "w") as package:
             package.writestr("../outside", b"payload")
+        self.run_build()
         with self.assertRaisesRegex(ValueError, "Unsafe ZIP entry"):
-            self.run_build()
+            self.run_build(strict=True)
 
-    def test_build_still_hashes_for_identity_without_extra_crc_pass(self):
-        with patch("ascender.materials.digest", wraps=materials.digest) as hashing, \
-                patch.object(zipfile.ZipFile, "testzip", side_effect=AssertionError("extra CRC pass")):
-            self.run_build(mode="build", files_only=False)
-        self.assertGreaterEqual(hashing.call_count, 4)
+    def test_default_build_and_staging_never_hash_or_preflight_zip(self):
+        with patch("ascender.materials.digest", side_effect=AssertionError("source hash scan")), \
+                patch("ascender.context.digest", side_effect=AssertionError("staged hash scan")), \
+                patch("ascender.image.hashlib.sha256", side_effect=AssertionError("identity hash")), \
+                patch("ascender.materials.archives.validate", side_effect=AssertionError("ZIP preflight")):
+            output = self.run_build(mode="build", files_only=False)
         report = next((self.root / "reports").iterdir())
         self.assertTrue((report / "image-ref.txt").is_file())
+        self.assertFalse((report / "materials.sha256").exists())
+        self.assertIn("Integrity validation: skipped", output)
+        manifest = (report / "manifest.txt").read_text()
+        self.assertIn("identity_mode=build-id\n", manifest)
+        self.assertIn("integrity_validation=skipped\n", manifest)
+
+    def test_default_tags_are_unique_build_ids(self):
+        config = self.config(mode="build", files_only=False)
+        selected = materials.resolve(config)
+        inputs = materials.collect(config, selected)
+        first = identify(config, selected, inputs, "sha256:base")
+        second = identify(config, selected, inputs, "sha256:base")
+        self.assertNotEqual(first.reference, second.reference)
+        self.assertEqual(first.hashes, "")
+
+    def test_strict_build_hashes_sources_and_copies_and_scans_zip_crcs(self):
+        digest = materials.digest
+        with patch("ascender.materials.digest", wraps=digest) as hashing, \
+                patch("ascender.context.digest", wraps=digest) as staged_hashing, \
+                patch.object(zipfile.ZipFile, "testzip", autospec=True, return_value=None) as crc:
+            self.run_build(mode="build", files_only=False, strict=True)
+        self.assertGreaterEqual(hashing.call_count, 4)
+        self.assertEqual(hashing.call_count, staged_hashing.call_count)
+        self.assertEqual(crc.call_count, 2)
+        report = next((self.root / "reports").iterdir())
         for line in (report / "materials.sha256").read_text().splitlines():
             self.assertRegex(line, r"^[0-9a-f]{64}  ")
+        self.assertIn("identity_mode=content-sha256\n", (report / "manifest.txt").read_text())
 
-    def test_unhashed_inputs_cannot_be_used_for_identity_or_staging(self):
-        config = self.config()
+    def test_default_staging_accepts_unhashed_inputs_without_checksum_file(self):
+        config = self.config(mode="build", files_only=False)
+        selected = materials.resolve(config)
+        inputs = [materials.Input(self.main, "camodel/archives/model.zip")]
+        image = identify(config, selected, inputs, "sha256:base")
+        with patch("ascender.context.digest", side_effect=AssertionError("staged hash scan")):
+            with context.stage(config, selected, inputs, image, "manifest") as root:
+                self.assertEqual((root / "camodel/archives/model.zip").read_bytes(), self.main.read_bytes())
+                self.assertFalse((root / "config/materials.sha256").exists())
+
+    def test_strict_identity_and_staging_require_content_hashes(self):
+        config = self.config(strict=True)
         selected = materials.resolve(config)
         inputs = [materials.Input(self.main, "camodel/main.zip")]
-        with self.assertRaisesRegex(ToolError, "Content hashes are unavailable"):
+        with self.assertRaisesRegex(ToolError, "requires content hashes"):
             identify(config, selected, inputs, "sha256:base")
         with self.assertRaisesRegex(ToolError, "requires content hashes"):
             with context.stage(config, selected, inputs, Image("ref", "hash", "", ""), ""):

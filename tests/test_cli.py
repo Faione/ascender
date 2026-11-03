@@ -286,6 +286,7 @@ class BuilderTests(unittest.TestCase):
         build_call = next(call for call in calls if "buildx" in call and "build" in call)
         self.assertIn("TORCH_VERSION=2.10.0+cpu", build_call)
         self.assertIn("TORCH_NPU_VERSION=2.10.0.post4", build_call)
+        self.assertIn("STRICT=0", build_call)
         report = self.reports()[0].parent
         manifest = (report / "manifest.txt").read_text()
         self.assertIn("torch=2.10.0+cpu\n", manifest)
@@ -295,7 +296,7 @@ class BuilderTests(unittest.TestCase):
     def test_unified_mirror_reaches_docker_report_and_image_identity(self):
         default = self.image_from(self.run_cli("--check", "--strict"))
         mirror = "https://mirror.example:8443"
-        output = self.run_cli("--mirror-url", mirror + "/")
+        output = self.run_cli("--mirror-url", mirror + "/", "--strict")
         self.assertIn(f"APT: {mirror}/ubuntu | pip: {mirror}/pypi/simple", output)
         image = self.image_from(output)
         self.assertNotEqual(default, image)
@@ -303,6 +304,7 @@ class BuilderTests(unittest.TestCase):
         calls = [json.loads(line) for line in Path(self.env["MOCK_LOG"]).read_text().splitlines()]
         build_call = next(call for call in calls if "buildx" in call and "build" in call)
         self.assertIn(f"MIRROR_URL={mirror}", build_call)
+        self.assertIn("STRICT=1", build_call)
         self.assertFalse(any(value.startswith(("APT_MIRROR=", "PIP_INDEX_URL=")) for value in build_call))
         manifest = (self.reports()[0].parent / "manifest.txt").read_text()
         for value in (f"mirror_url={mirror}\n", f"apt_mirror={mirror}/ubuntu\n", f"pip_index={mirror}/pypi/simple\n"):
@@ -461,7 +463,7 @@ class BuilderTests(unittest.TestCase):
         args = ["--torch-version", "2.7.1", "--torch-npu-version", "2.7.1"]
         output = self.run_cli(*args, "--check", "--strict", "--files-only")
         self.assertIn("Resolved torch-npu version: 2.7.1 -> 2.7.1.post5.dev20261111", output)
-        output = self.run_cli(*args)
+        output = self.run_cli(*args, "--strict")
         report = self.reports()[0].parent
         self.assertIn("torch_npu=2.7.1.post5.dev20261111\n", (report / "manifest.txt").read_text())
         self.assertIn("npu2.7.1.post5.dev20261111-", (report / "image-ref.txt").read_text())

@@ -1,4 +1,4 @@
-"""Create a disposable build context from validated input snapshots."""
+"""Copy selected inputs into a disposable context; verify copies only in strict mode."""
 from contextlib import contextmanager
 from pathlib import Path
 import json
@@ -11,7 +11,8 @@ from .materials import digest
 
 @contextmanager
 def stage(config, selected, inputs, image, manifest):
-    require(all(item.sha256 is not None for item in inputs), "Build context requires content hashes for all inputs.")
+    if config.strict:
+        require(all(item.sha256 is not None for item in inputs), "Strict build context requires content hashes for all inputs.")
     with tempfile.TemporaryDirectory(prefix="ascend-dev.") as directory:
         root = Path(directory)
         for name in ("packages", "config", "camodel/archives"):
@@ -20,7 +21,8 @@ def stage(config, selected, inputs, image, manifest):
             target = root / item.destination
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(item.source, target)
-            require(digest(target) == item.sha256, f"Input changed during staging: {item.source}")
+            if config.strict:
+                require(digest(target) == item.sha256, f"Input changed during staging: {item.source}")
         for name, values in (("apt-packages.txt", config.apt_package), ("pip-packages.txt", config.pip_package)):
             (root / "config" / name).write_text("".join(value + "\n" for value in values))
         (root / "config/constraints.txt").touch()
@@ -28,5 +30,6 @@ def stage(config, selected, inputs, image, manifest):
         if config.target == "simulation":
             (root / "camodel/settings.json").write_text(json.dumps(config.simulation_settings, indent=2) + "\n")
         (root / "config/manifest.txt").write_text(manifest)
-        (root / "config/materials.sha256").write_text(image.hashes)
+        if config.strict:
+            (root / "config/materials.sha256").write_text(image.hashes)
         yield root

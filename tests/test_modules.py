@@ -41,7 +41,7 @@ class ModuleTests(unittest.TestCase):
         source.write_text("original")
         item = Input(source, "packages/cann/toolkit.run", digest(source))
         source.write_text("changed")
-        config = BuildConfig()
+        config = BuildConfig(strict=True)
         selected = Materials(source, source)
         with self.assertRaisesRegex(ToolError, "changed during staging"):
             with context.stage(config, selected, [item], Image("ref", "hash", "", ""), ""):
@@ -80,6 +80,7 @@ class ModuleTests(unittest.TestCase):
             def build(self, config, selected, image, context_path, report):
                 self.context = context_path
                 assert (context_path / "scripts/archives.py").is_file()
+                assert (context_path / "scripts/python_deps.py").is_file()
                 (report / "image-id.txt").write_text("sha256:output")
                 (report / "build.log").write_text("adapter build")
                 return "sha256:output"
@@ -98,7 +99,7 @@ class ModuleTests(unittest.TestCase):
             with self.subTest(moved=moved):
                 backend = Backend()
                 backend.moved = moved
-                config = BuildConfig(soc="950", cann_version="9.1.0", no_torch=True,
+                config = BuildConfig(soc="950", cann_version="9.1.0", no_torch=True, strict=True,
                                      materials_root=root, output_dir=self.path / str(moved))
                 if moved:
                     with self.assertRaisesRegex(ToolError, "Base image changed"):

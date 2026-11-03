@@ -144,7 +144,10 @@ class SimulationTests(unittest.TestCase):
         source = source.replace('Path("/etc/ascend/camodel-env.sh")', f"Path({str(self.loader)!r})")
         (scripts / "simulation.py").write_text(source)
         marker = self.root / "extra-init-called"
-        (scripts / "verify-image.sh").write_text('[[ "$ESL_SOC_VERSION" == Ascend950DT && "${LD_LIBRARY_PATH%%:*}" == "$CAMODEL_HOME/vendor/lib" ]]\n')
+        verification = self.root / "verification-called"
+        (scripts / "verify-image.sh").write_text('[[ "$ESL_SOC_VERSION" == Ascend950DT && "${LD_LIBRARY_PATH%%:*}" == "$CAMODEL_HOME/vendor/lib" ]]\n'
+                                                 + f"printf called > {shlex.quote(str(verification))}\n")
+        (scripts / "python_deps.py").write_text('print("inventory refreshed")\n')
         cann_env = self.root / "cann-env.sh"
         cann_env.write_text(f"export ASCEND_HOME_PATH={shlex.quote(str(self.cann))}\n")
         environment = self.root / "environment.sh"
@@ -171,11 +174,13 @@ class SimulationTests(unittest.TestCase):
         binary.mkdir()
         (binary / "python3").symlink_to(sys.executable)
         env = dict(os.environ, PATH=str(binary) + os.pathsep + os.environ["PATH"],
-                   ASCEND_ENV_MODE="simulation", CAMODEL_HOME=str(self.home))
+                   ASCEND_ENV_MODE="simulation", CAMODEL_HOME=str(self.home), STRICT="1")
         for key in ("_ASCEND_CANN_ENV_LOADED", "_ASCEND_SIM_ENV_LOADED"):
             env.pop(key, None)
-        for extra_hook in (False, True):
-            with self.subTest(extra_hook=extra_hook):
+        for strict, extra_hook in ((False, False), (True, False), (False, True), (True, True)):
+            with self.subTest(strict=strict, extra_hook=extra_hook):
+                env["STRICT"] = "1" if strict else "0"
+                verification.unlink(missing_ok=True)
                 shutil.rmtree(self.home)
                 self.loader.unlink(missing_ok=True)
                 if extra_hook:
@@ -183,6 +188,8 @@ class SimulationTests(unittest.TestCase):
                 result = subprocess.run(["/bin/bash", str(runner)], env=env, text=True, capture_output=True)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual(marker.exists(), extra_hook)
+                self.assertEqual(verification.exists(), strict)
+                self.assertIn("inventory refreshed", result.stdout)
 
 
 if __name__ == "__main__":

@@ -91,9 +91,9 @@ def validate_pair(packages: list[Path], directory: Path) -> None:
 
 
 def collect(config: BuildConfig, selected: Materials) -> list[Input]:
-    """Check selected inputs; only strict checks and builds compute content hashes."""
+    """Locate usable inputs; scan content only when strict is requested."""
     result = []
-    hash_inputs = config.mode == "build" or config.strict
+    hash_inputs = config.strict
 
     def add(path: Path, destination: str, component: str = "", option: str = "") -> None:
         clean_text(str(path))
@@ -105,13 +105,7 @@ def collect(config: BuildConfig, selected: Materials) -> list[Input]:
         if path.stat().st_size == 0:
             raise ToolError(f"Invalid material: {component}\n  Problem: empty input file\n  Path: {path}\n  Action: replace it with a complete file.")
         try:
-            if hash_inputs:
-                checksum = digest(path)
-            else:
-                # Verify readability without scanning the entire file.
-                with path.open("rb") as source:
-                    source.read(1)
-                checksum = None
+            checksum = digest(path) if hash_inputs else None
         except PermissionError as error:
             raise ToolError(f"Unreadable material: {component}\n  Path: {path}\n  Action: grant the current user read access.") from error
         result.append(Input(path, destination, checksum))
@@ -135,7 +129,8 @@ def collect(config: BuildConfig, selected: Materials) -> list[Input]:
         validate_pair(selected.archives, config.materials_root.absolute() / "camodel")
         for path in selected.archives:
             add(path, f"camodel/archives/{path.name}", f"CAModel ZIP {path.name}", "--camodel-archive")
-        archives.validate(selected.archives, crc=config.strict)
+        if config.strict:
+            archives.validate(selected.archives, crc=True)
         for path, name in ((selected.init, "init.sh"), (selected.env, "env.sh"), (selected.check, "check.sh")):
             if path is not None:
                 option = {"init.sh": "--camodel-init", "env.sh": "--camodel-env", "check.sh": "--camodel-check"}[name]
@@ -149,4 +144,5 @@ def collect(config: BuildConfig, selected: Materials) -> list[Input]:
         add(path, f"scripts/{path.name}")
     add(PROJECT / "ascender/archives.py", "scripts/archives.py")
     add(PROJECT / "ascender/simulation.py", "scripts/simulation.py")
+    add(PROJECT / "ascender/python_deps.py", "scripts/python_deps.py")
     return result

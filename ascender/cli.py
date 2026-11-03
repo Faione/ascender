@@ -56,7 +56,7 @@ def build_options(argv=None):
         modes.add_argument(f"--{flag}", dest="mode", action="store_const", const=mode, help=help_text)
     parser.set_defaults(mode="build")
     parser.add_argument("--files-only", action="store_true", help="With --check: do not access Docker")
-    parser.add_argument("--strict", action="store_true", help="Enable SHA-256 and ZIP CRC for --check; add ZIP CRC preflight to builds (builds always hash for image identity)")
+    parser.add_argument("--strict", action="store_true", help="Enable SHA-256, ZIP/installer checks, staged-copy and image verification; use content-based tags")
     return BuildConfig(**vars(parser.parse_args(argv)))
 
 

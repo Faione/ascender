@@ -4,6 +4,7 @@ ARG TORCH_STAGE=torch-install
 FROM ${BASE_IMAGE} AS system-deps
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ARG MIRROR_URL=http://mirrors.tools.huawei.com
+ARG STRICT=0
 # The index is persisted in /etc/pip.conf for all current and future users.
 # Keep the mirror as an ARG so runtime environment does not mask pip config.
 ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1

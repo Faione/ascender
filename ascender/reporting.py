@@ -42,7 +42,10 @@ def materials_help(config, selected):
 
 def manifest(config, selected, image, complete=False):
     validation = ("passed-build-script" if complete else "build-script-required") if selected.check else "not-performed"
+    installation = ("passed-build-script" if complete else "build-script-required") if config.strict else "not-performed"
     return (image.parameters + f"base_reference={config.base_image}\n"
+            f"integrity_validation={'strict' if config.strict else 'skipped'}\n"
+            f"installation_validation={installation}\n"
             f"image={image.reference}\nfingerprint={image.fingerprint}\n"
             f"device_validation=not-performed\nsimulation_validation={validation}\n")
 

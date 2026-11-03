@@ -25,7 +25,7 @@ docker image inspect ubuntu:22.04
 | `torch_npu-2.10.0.post4-cp310-cp310-manylinux_2_28_x86_64.whl` | [torch-npu wheel](https://gitcode.com/Ascend/pytorch/releases/download/v26.1.0-pytorch2.10.0/torch_npu-2.10.0.post4-cp310-cp310-manylinux_2_28_x86_64.whl) | 同上 |
 | CAModel 主包与 `_config.zip` 配置包、可选 `init.sh` / `env.sh` / 自检脚本 | 从实际模型/仿真供应方获取，不推断公开地址 | `camodel/` |
 
-官方入口：[CANN](https://www.hiascend.com/developer/download/community/result?module=cann)、[PyTorch CPU wheels](https://download.pytorch.org/whl/cpu/torch/)、[torch-npu releases](https://gitcode.com/Ascend/pytorch/releases)。有官方校验和时应在准备材料时核对；本工具记录的是本地 SHA-256 指纹，不将其标为上游来源验证。
+官方入口：[CANN](https://www.hiascend.com/developer/download/community/result?module=cann)、[PyTorch CPU wheels](https://download.pytorch.org/whl/cpu/torch/)、[torch-npu releases](https://gitcode.com/Ascend/pytorch/releases)。有官方校验和时应在准备材料时核对；本工具仅在 `--strict` 下记录本地 SHA-256 指纹，不将其标为上游来源验证。
 
 ## 从目录识别版本
 

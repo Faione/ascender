@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
+trap 'status=$?; printf "ERROR: %s:%s: %s (exit %s)\n" "${BASH_SOURCE[0]}" "$LINENO" "$BASH_COMMAND" "$status" >&2; exit "$status"' ERR
 source /etc/ascend/environment.sh
 atc --help >/dev/null
 compiler=$(command -v bisheng || find /usr/local/Ascend -type f -path '*/bin/bisheng' -print -quit)

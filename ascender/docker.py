@@ -77,7 +77,7 @@ class Docker:
             "TORCH_VERSION": config.torch_version, "TORCH_NPU_VERSION": config.torch_npu_version,
             "TORCH_WHEEL_FILE": selected.torch.name if selected.torch else "",
             "TORCH_NPU_WHEEL_FILE": selected.torch_npu.name if selected.torch_npu else "",
-            "MIRROR_URL": config.mirror_url,
+            "MIRROR_URL": config.mirror_url, "STRICT": "1" if config.strict else "0",
             "DEV_WORKDIR": config.workdir, "INPUT_FINGERPRINT": image.fingerprint,
         }
         args = ["buildx", "build", "--builder", self.context, "--load", "--pull=false", "--platform", "linux/amd64",

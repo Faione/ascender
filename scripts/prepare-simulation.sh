@@ -6,8 +6,6 @@ python3 -I /usr/local/lib/ascend/archives.py /tmp/camodel-inputs "$CAMODEL_HOME"
 python3 -I /usr/local/lib/ascend/simulation.py /tmp/camodel-inputs/settings.json "$CAMODEL_HOME"
 
 cd "$CAMODEL_HOME"
-for script in init.sh check.sh; do [[ ! -f "/tmp/camodel-inputs/$script" ]] || bash -n "$script"; done
-[[ ! -f env.sh ]] || bash -n env.sh
 unset _ASCEND_SIM_ENV_LOADED
 source /etc/ascend/environment.sh
 if [[ -f /tmp/camodel-inputs/init.sh ]]; then bash ./init.sh; fi
@@ -19,5 +17,6 @@ if [[ -f /tmp/camodel-inputs/check.sh ]]; then
 else
     printf 'Simulation installed; functional validation NOT performed (no --camodel-check).\n'
 fi
-# Init/check scripts are allowed to customize files, so verify core versions again.
-bash /usr/local/lib/ascend/verify-image.sh
+# Refresh the inventory after optional hooks; verify only in strict mode.
+if [[ "${STRICT:-0}" == 1 ]]; then bash /usr/local/lib/ascend/verify-image.sh; fi
+python3 /usr/local/lib/ascend/python_deps.py inventory /usr/local/share/ascend/installed-packages.txt

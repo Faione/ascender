@@ -46,7 +46,7 @@ SoC 同样先精确匹配。若没有 `950` 的 ops 包且只有 `950dt` 或 `95
 --camodel-archive /data/models/456B2/x86_64_ESLMODEL_Ascend950DT_456B2_config.zip
 ```
 
-显式指定后只使用这两个包，忽略目录内其他 ZIP。省略全部 `--camodel-archive` 时自动查找 `camodel/*ESLMODEL*.zip`，该目录必须只有一套主包/配置包。包内容变化会影响自动生成的镜像 tag。
+显式指定后只使用这两个包，忽略目录内其他 ZIP。省略全部 `--camodel-archive` 时自动查找 `camodel/*ESLMODEL*.zip`，该目录必须只有一套主包/配置包。普通构建每次生成新的构建 ID；`--strict` 构建使用内容指纹，包内容变化会改变 tag。
 
 切换 CAModel 时同时核对 `--soc`、`--esl-soc-version` 和 `--esl-hardware-version` 是否适用于新包。仅有额外定制需求时再添加 `--camodel-init /data/models/456B2/init.sh`、`--camodel-env /data/models/456B2/env.sh` 或 `--camodel-check /data/models/456B2/check.sh`。这些都是可选文件，默认从材料根目录的 `camodel/` 读取，不会随 ZIP 的绝对路径自动切换。
 
@@ -182,11 +182,15 @@ python3 build.py \
 | `--check --strict` | 计算材料 SHA-256、完整检查 ZIP CRC，检查 Docker 并计算最终镜像名，不构建 |
 | `--check --files-only --strict` | 执行严格材料检查，不访问 Docker，不计算依赖基础镜像 ID 的最终 tag |
 
-`--materials`、`--dry-run`、`--check` 三种模式互斥。默认快速检查包括文件存在/非空/可读、文件名版本/ABI/架构、仿真包配对，以及 ZIP 目录结构、路径/类型安全和跨包冲突；只读少量文件数据和 ZIP 目录元数据，不校验所有压缩内容。文件内容损坏需要 `--strict` 的 CRC 扫描或实际解压才能发现。
+`--materials`、`--dry-run`、`--check` 三种模式互斥。默认只根据文件名和文件属性定位材料，检查存在/非空、版本/ABI/架构及仿真包配对，不打开文件读取内容，不执行 ZIP 预检。`--strict` 才读取材料计算 SHA-256，并检查 ZIP 目录结构、路径/类型安全、跨包冲突及完整 CRC。镜像内实际解压仍执行路径检查及 Python 解压器自带的 CRC 检查。
 
-`--strict` 用于 `--check` 或实际构建，表示启用昂贵的内容检查，与控制模糊匹配的 `--strict-versions`、`--strict-soc` 相互独立。`--strict` 不改变版本/型号选择，也不参与镜像指纹。严格模式计算的 SHA-256 是本地内容指纹，并非上游来源认证。
+`--strict` 用于 `--check` 或实际构建，与控制模糊匹配的 `--strict-versions`、`--strict-soc` 相互独立，不改变版本/型号选择。只有此选项启用材料内容校验；计算的 SHA-256 是本地内容指纹，并非上游来源认证。
 
-实际构建始终计算 SHA-256，并在复制上下文后重新核对，用于自动 tag 和防止材料变化；默认不额外扫描 ZIP CRC，添加 `--strict` 才在构建前完整扫描。镜像内解压时随读取自然校验成员 CRC，不再提前额外解压一遍。宿主机不执行安装器或供应方脚本；包内部及安装后检查在容器内执行。
+普通构建直接复制材料并安装，不计算 SHA-256、不执行 ZIP 预检、不比对复制后的内容，也不执行显式的安装器 `--check`、`pip check` 和镜像功能验证。添加 `--strict` 才启用这些检查，并在构建结束时复核基础镜像 ID。安装器/解压器自身的错误处理仍随实际安装执行；显式指定的 `--camodel-check` 会按要求运行。
+
+Python 依赖只按实际声明安装：Torch/torch-npu wheel 由 pip 解析依赖；CANN 安装前后比较 Python 包元数据，将新增或变更包的 `Requires-Dist` 写入 `/etc/ascend/cann-requirements.txt`，保留版本范围、extras 和环境条件，再交给 pip 安装。没有声明元数据的依赖无法自动推断，可通过 `--pip-package PACKAGE` 或 `--post-install` 补充。默认不预装 `build`、`pyyaml`、`pytest`、`dtype`、`psutil`，也不统一限制 `numpy<2`；若实际软件声明需要这些包，会按声明安装。
+
+`finish-image.sh` 安装上述 CANN 依赖和 `--pip-package` 指定的包，配置 shell 环境及容器入口，保存构建清单。依赖列表为空时跳过 pip 安装。仅 `--strict` 调用 `verify-image.sh` 检查编译器、Python 依赖和普通用户环境；系统/Python 包清单在两种模式下都会记录。`requires ... which is not installed` 表示已安装包缺少依赖，strict 下的 `pip check` 会因此失败。构建失败时查看报告目录的 `build.log`，脚本会输出阶段、失败命令、行号和退出码。
 
 ## 参数规则
 
@@ -196,13 +200,13 @@ python3 build.py \
 - SoC 从指定 CANN 版本、linux/x86_64 的 ops 包名解析，大小写不敏感，输出统一小写。默认先精确匹配；纯数字型号（例如 `950`）可回退到紧随字母后缀的型号（例如 `950dt`、`950pr`），不会匹配 `9500` 或其他数字型号。多候选告警并停止；明确输入 `950dt` 时仅精确匹配，`--strict-soc` 对默认查找和显式 `--ops` 都禁用回退。
 - Torch/torch-npu 默认优先匹配完整版本；无精确候选且输入为 `X.Y.Z` 时，允许匹配同一基础版本的 `.postN`、`.postN.devN`、`+local` 及其组合。例如 `2.7.1` 可匹配 `2.7.1.post5.dev20261111`。只在 cp310/x86_64 wheel 中选择，不跨基础版本、不自动选择 rc 或独立 `.devN` 包；已写出后缀的输入仍按完整版本匹配（`2.7.1.post5` 不会隐式匹配 `2.7.1.post5.dev20261111`）。
 - 唯一候选会显示 `Resolved ... version: 输入 -> 完整版本`。多个候选输出 `WARNING` 并停止，不自动选择最大版本。完整版本仍对应多个平台构建时，使用精确 wheel 文件路径消除歧义。`--strict-versions` 关闭基础版本回退；它也适用于显式 wheel 路径。
-- 镜像 tag、manifest、Docker 构建参数、pip 约束及安装后校验均使用文件中解析出的完整版本；自动识别、基础版本筛选和完整版本筛选选择相同文件时得到相同镜像名。
+- 镜像 tag、manifest、Docker 构建参数、pip 约束及安装后校验均使用文件中解析出的完整版本；`--strict` 下，自动识别、基础版本筛选和完整版本筛选选择相同文件时得到相同镜像名。
 - `2.7.1.post5.dev20261111` 等开发包可直接使用；Torch 与 torch-npu 的基础版本须一致。多个开发日期会列出候选，需要指定完整日期版本或文件路径。
 - 通用相对路径以调用目录为基准；`--camodel-archive`、`--camodel-init`、`--camodel-env`、`--camodel-check` 的相对路径以 `ROOT/camodel/` 为基准，均支持绝对路径。
 - `--mirror-url` 统一指定 APT/PIP 源，默认 `http://mirrors.tools.huawei.com`；APT 地址为 `URL/ubuntu`，PIP 地址为 `URL/pypi/simple`。仅接受 HTTP(S) 协议、主机和可选端口，允许末尾 `/`；不接受路径、凭据、查询串、片段或空白。原 `--apt-mirror`、`--pip-index` 已移除。
-- PIP 源写入所有用户可读的 `/etc/pip.conf`，root、developer 和后续用户默认共享；HTTP 源同时写入对应的 `trusted-host`。不持久化 `PIP_INDEX_URL`，允许按 pip 的优先级覆盖。构建检查 root 和非 root 均可读取源配置。
+- PIP 源写入所有用户可读的 `/etc/pip.conf`，root、developer 和后续用户默认共享；HTTP 源同时写入对应的 `trusted-host`。不持久化 `PIP_INDEX_URL`，允许按 pip 的优先级覆盖。strict 构建检查 root 和非 root 均可读取源配置。
 - `--apt-package vim --apt-package htop`、`--pip-package pytest --pip-package 'numpy<2'` 可重复。PIP 参数接受包名、extras 和版本约束，不接受直接 URL、VCS、markers 或选项；附加约束使用 `--pip-constraints`。
-- `--post-install` 指定公共安装阶段执行的 Bash 脚本，先于 CAModel 初始化；执行后重新校验核心版本。
+- `--post-install` 指定公共安装阶段执行的 Bash 脚本，先于 CAModel 初始化；strict 下在执行后校验核心版本。
 - `--network none` 仅禁用 RUN 网络，当前不是完整离线安装方案。`--no-cache` 不删除全局缓存。
 
 支持的环境变量为 `ASCEND_DEV_TARGET`、`ASCEND_DEV_SOC`、`ASCEND_DEV_CANN_VERSION`、`ASCEND_DEV_TORCH_VERSION`、`ASCEND_DEV_TORCH_NPU_VERSION`、`ASCEND_DEV_BASE_IMAGE`、`ASCEND_DEV_MATERIALS_ROOT`、`ASCEND_DEV_MIRROR_URL`、`ASCEND_DEV_ESL_SOC_VERSION`、`ASCEND_DEV_ESL_HARDWARE_VERSION`（仅仿真）。无 tag 配置变量。运行配置工具不依赖这些变量。
@@ -222,28 +226,28 @@ Missing compatible wheel for torch_npu 2.7.1 (cp310/x86_64).
   Action: provide the expected material at this location or select it explicitly with --torch-npu-version / --torch-npu-wheel.
 ```
 
-CAModel 配对缺失会明确列出缺的是主包还是配置包，以及期望的 ZIP 文件名。空文件和不可读文件分别报告具体问题及路径；材料缺失或无效时应修复文件后重新执行 `--check --files-only`。
+CAModel 配对缺失会明确列出缺的是主包还是配置包，以及期望的 ZIP 文件名。空文件会报告具体路径；不可读文件在 strict 扫描或实际复制时报告错误。材料缺失或无效时应修复文件后重新执行检查。
 
 ## 自动命名与报告
 
 名称示意：
 
 ```text
-ascend-dev:npu-cann9.1.0-950-torch2.10.0_cpu-npu2.10.0.post4-py310-amd64-<HASH12>
-ascend-sim:sim-cann9.1.0-950-torch2.10.0_cpu-npu2.10.0.post4-py310-amd64-<HASH12>
+ascend-dev:npu-cann9.1.0-950-torch2.10.0_cpu-npu2.10.0.post4-py310-amd64-<ID12>
+ascend-sim:sim-cann9.1.0-950-torch2.10.0_cpu-npu2.10.0.post4-py310-amd64-<ID12>
 ```
 
-没有 `--tag` 或 `latest` 别名。参数（含仿真初始化设置）、材料、容器脚本、共享 ZIP/初始化模块和基础镜像 ID 参与指纹。材料绝对路径、报告目录、缓存和显示选项不影响命名；相同基础镜像 ID 的引用别名得到同一个 tag。在线依赖源会变化，指纹不保证镜像逐字节可复现。
+没有 `--tag` 或 `latest` 别名。普通构建的 `ID12` 来自随机 UUID，每次构建生成不同 tag，无需读取材料内容。`--strict` 下改用 SHA-256 指纹前 12 位，参数（含仿真初始化设置）、材料、容器脚本、共享 ZIP/初始化模块和基础镜像 ID 参与指纹；材料绝对路径、报告目录、缓存和显示选项不参与，相同基础镜像 ID 的引用别名得到同一个 tag。在线依赖源会变化，内容指纹不保证镜像逐字节可复现。
 
 实际构建输出到 `build/<build-id>/`，可用 `--output-dir` 修改父目录：
 
-- `manifest.txt`：参数、自动镜像名、输入指纹和验证状态。
-- `materials.sha256`：按上下文逻辑路径记录的材料 SHA-256。
+- `manifest.txt`：参数、自动镜像名、构建 ID 或内容指纹、命名模式及校验状态。
+- `materials.sha256`：仅 `--strict` 构建生成，按上下文逻辑路径记录材料 SHA-256；普通构建不生成此文件。
 - `build.log`：Docker 构建输出。
 - `result.txt`：退出码、失败阶段、镜像引用和 ID；材料检查失败也保留。
 - 成功后生成 `image-ref.txt` 和 `installed-packages.txt`。`image-id.txt` 由 Docker 构建成功后写入，后续报告阶段仍可能失败；`image-ref.txt` 才是完整流程成功的标志。
 
-输入复制到临时上下文后再次核对哈希，变化则失败。原始安装包通过只读 RUN mount 使用，不 COPY 进最终镜像。临时目录在成功、失败或中断时清理。镜像内包清单通过未启动的临时容器读取，不访问设备。
+仅 `--strict` 在输入复制到临时上下文后再次核对哈希，变化则失败。原始安装包通过只读 RUN mount 使用，不 COPY 进最终镜像。临时目录在成功、失败或中断时清理。镜像内包清单通过未启动的临时容器读取，不访问设备。
 
 ## 外部代码验证
 

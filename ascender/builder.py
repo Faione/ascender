@@ -17,11 +17,13 @@ def build(config, backend=Docker.local):
             return
         if config.mode == "preview":
             reporting.show_plan(config, selected)
-            print("Image: pending (input hashes and local base image ID are resolved at check/build time)")
+            print("Image: pending (build ID at build time; content fingerprint only with --strict)")
             return
         if config.mode == "check":
             level = "strict (SHA-256 + ZIP CRC)" if config.strict else "fast (SHA-256 and ZIP CRC skipped)"
             print(f"Validation: {level}", flush=True)
+        elif not config.strict:
+            print("Integrity validation: skipped (use --strict to enable SHA-256 and ZIP preflight)", flush=True)
         inputs = materials.collect(config, selected)
         if config.files_only:
             reporting.show_plan(config, selected)
@@ -45,13 +47,15 @@ def build(config, backend=Docker.local):
         report.phase = "staging"
         text = reporting.manifest(config, selected, image)
         report.write("manifest.txt", text)
-        report.write("materials.sha256", image.hashes)
+        if config.strict:
+            report.write("materials.sha256", image.hashes)
         with context.stage(config, selected, inputs, image, text) as root:
             report.phase = "build"
             report.image_id = docker.build(config, selected, image, root, report.directory)
         report.phase = "report"
-        require(docker.image_id(config.base_image) == base_id,
-                "Base image changed during the build; rerun with a stable local base reference.")
+        if config.strict:
+            require(docker.image_id(config.base_image) == base_id,
+                    "Base image changed during the build; rerun with a stable local base reference.")
         with docker.container(report.image_id) as container:
             docker.copy(container, "/usr/local/share/ascend/installed-packages.txt", report.directory / "installed-packages.txt")
         report.write("manifest.txt", reporting.manifest(config, selected, image, complete=True))
