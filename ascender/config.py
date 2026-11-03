@@ -5,7 +5,13 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 import re
 
-from .errors import require
+from .errors import ToolError, require
+
+REFERENCE_VERSIONS = (
+    ("CANN", "cann_version", "9.1.0"),
+    ("Torch", "torch_version", "2.10.0+cpu"),
+    ("torch-npu", "torch_npu_version", "2.10.0.post4"),
+)
 
 
 def clean_text(value: str) -> str:
@@ -50,9 +56,12 @@ class BuildConfig:
     files_only: bool = False
 
     @property
+    def reference_versions(self):
+        return REFERENCE_VERSIONS[:1] if self.no_torch else REFERENCE_VERSIONS
+
+    @property
     def compatibility(self) -> str:
-        supported = self.cann_version == "9.1.0" and (
-            self.no_torch or (self.torch_version, self.torch_npu_version) == ("2.10.0+cpu", "2.10.0.post4"))
+        supported = all(getattr(self, setting) == version for _, setting, version in self.reference_versions)
         return "documented" if supported else "unverified"
 
     def validate(self) -> None:
@@ -100,7 +109,22 @@ class BuildConfig:
 
     def validate_compatibility(self) -> None:
         """Check the recorded combination after wheel resolution supplies full versions."""
-        require(self.compatibility == "documented" or self.allow_unverified or self.mode in ("materials", "preview"),
-                f"Version combination is unrecorded: CANN={self.cann_version}, "
-                f"Torch={self.torch_version or 'not installed'}, torch-npu={self.torch_npu_version or 'not installed'}; "
-                "see docs/downloads.md or explicitly use --allow-unverified.")
+        if self.compatibility == "documented" or self.allow_unverified or self.mode in ("materials", "preview"):
+            return
+        combination = ", ".join(f"{name}={getattr(self, setting)}" for name, setting, _ in self.reference_versions)
+        different = [name for name, setting, reference in self.reference_versions if getattr(self, setting) != reference]
+        lines = ["Version combination is unrecorded.",
+                 "Missing item: software compatibility record; this is not a missing-file diagnostic.",
+                 f"  Missing record for: {combination}",
+                 f"  Components differing from the recorded reference: {', '.join(different)}",
+                 "Resolved versions compared with the recorded reference (DIFF marks a different version):"]
+        for name, setting, reference in self.reference_versions:
+            actual = getattr(self, setting)
+            status = "MATCH" if actual == reference else "DIFF"
+            flag = "--" + setting.replace("_", "-")
+            lines.append(f"  {status:5} {name}={actual} ({flag}); recorded={reference}")
+        if self.no_torch:
+            lines.append("  Torch/torch-npu: not requested (--no-torch).")
+        lines.extend(("See docs/downloads.md for recorded combinations.",
+                      "If this combination is intentional, add --allow-unverified; material checks still apply."))
+        raise ToolError("\n".join(lines))

@@ -167,6 +167,34 @@ python3 prepare_runtime.py --help
 
 支持的环境变量为 `ASCEND_DEV_TARGET`、`ASCEND_DEV_SOC`、`ASCEND_DEV_CANN_VERSION`、`ASCEND_DEV_TORCH_VERSION`、`ASCEND_DEV_TORCH_NPU_VERSION`、`ASCEND_DEV_BASE_IMAGE`、`ASCEND_DEV_MATERIALS_ROOT`。无 tag 配置变量。运行配置工具不依赖这些变量。
 
+## 版本配套提示
+
+工具先检查材料文件，再检查版本配套记录。`Version combination is unrecorded` 会明确标出缺少的是当前软件组合的配套记录，列出缺少记录的完整组合，以及与参考组合不同的组件；随后逐项列出实际版本、对应参数和参考版本，例如：
+
+```text
+Missing item: software compatibility record
+Missing record for: CANN=9.1.0, Torch=2.7.1+cpu, torch-npu=2.7.1.post5.dev20261111
+Components differing from the recorded reference: Torch, torch-npu
+MATCH CANN=9.1.0 (--cann-version); recorded=9.1.0
+DIFF  Torch=2.7.1+cpu (--torch-version); recorded=2.10.0+cpu
+DIFF  torch-npu=2.7.1.post5.dev20261111 (--torch-npu-version); recorded=2.10.0.post4
+```
+
+`MATCH` 表示与参考版本相同，`DIFF` 表示与参考版本不同；它们描述配套记录，不表示文件缺失或已确认不兼容。确认使用当前组合时追加 `--allow-unverified`，材料检查仍保持启用。
+
+材料缺失时单独显示缺少的组件、期望文件名或版本/ABI/架构、搜索目录、当前不匹配的候选和修复参数，例如：
+
+```text
+Missing compatible wheel for torch_npu 2.7.1 (cp310/x86_64).
+  Missing component: torch-npu wheel
+  Expected: torch_npu version 2.7.1; Python cp310, ABI cp310, linux/manylinux x86_64
+  Search location: /data/ascend-materials/torch
+  Available candidates: none
+  Action: provide the expected material at this location or select it explicitly with --torch-npu-version / --torch-npu-wheel.
+```
+
+CAModel 配对缺失会明确列出缺的是主包还是配置包，以及期望的 ZIP 文件名。空文件和不可读文件分别报告具体问题及路径；材料缺失或无效时应修复文件后重新执行 `--check --files-only`，`--allow-unverified` 只放行配套记录检查。
+
 ## 自动命名与报告
 
 名称示意：

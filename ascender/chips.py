@@ -5,7 +5,7 @@ from pathlib import Path
 import re
 import sys
 
-from .errors import ToolError, require
+from .errors import ToolError, missing_material, require
 
 
 def model(path: Path, cann_version: str) -> str | None:
@@ -36,7 +36,11 @@ def resolve(requested: str, cann_version: str, directory: Path, explicit: str = 
             print(f"WARNING: Multiple candidates for --soc {requested}:\n{options}", file=sys.stderr)
             raise ToolError("Select a full --soc model or an exact --ops path; no ops installer was selected.")
         if not compatible:
-            require(preview, f"Missing ops installer for SoC {requested}, CANN {cann_version} (linux/x86_64) in {directory}.")
+            if not preview:
+                expected = f"Ascend-cann-{requested}-ops_{cann_version}_linux-x86_64.run"
+                detail = "Exact model required (--strict-soc)." if not fuzzy else "A unique letter-suffixed model is also accepted for numeric SoCs."
+                raise missing_material("CANN ops installer", f"{expected}. {detail}", directory, "--soc / --ops",
+                                       [path for path, _ in candidates], summary=f"Missing ops installer for SoC {requested}, CANN {cann_version} (linux/x86_64).")
             return directory / f"Ascend-cann-{requested}-ops_{cann_version}_linux-x86_64.run", requested
         path, actual = compatible[0]
     if actual != requested:

@@ -5,7 +5,7 @@ from pathlib import Path
 import re
 import sys
 
-from .errors import ToolError, require
+from .errors import ToolError, missing_material, require
 
 
 def wheel_version(path: Path, package: str) -> str | None:
@@ -44,7 +44,11 @@ def resolve(package: str, requested: str, directory: Path, explicit: str = "", *
             print(f"WARNING: Multiple candidates for --{flag}-version {requested}:\n{options}", file=sys.stderr)
             raise ToolError(f"Select a full --{flag}-version or an exact --{flag}-wheel path; no wheel was selected.")
         if not compatible:
-            require(preview, f"Missing compatible wheel for {package} {requested} (cp310/x86_64) in {directory}.")
+            if not preview:
+                expected = f"{package} version {requested}; Python cp310, ABI cp310, linux/manylinux x86_64"
+                expected += "; exact version required (--strict-versions)" if not fuzzy else "; exact version first, base-version suffix fallback allowed"
+                raise missing_material(f"{flag} wheel", expected, directory, f"--{flag}-version / --{flag}-wheel",
+                                       [path for path, _ in candidates], summary=f"Missing compatible wheel for {package} {requested} (cp310/x86_64).")
             return directory / f"{package}-{requested}-cp310-cp310-*_x86_64.whl", requested
         path, actual = compatible[0]
     if actual != requested:

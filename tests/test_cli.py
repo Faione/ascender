@@ -98,6 +98,57 @@ class BuilderTests(unittest.TestCase):
         wheel.unlink()
         self.assertIn("Missing", self.run_cli("--check", "--files-only", expected=1))
 
+    def test_missing_toolkit_identifies_component_filename_location_and_option(self):
+        toolkit = next(self.cann.glob("*toolkit*"))
+        toolkit.unlink()
+        output = self.run_cli("--check", "--files-only", expected=1)
+        for text in ("Missing component: CANN Toolkit installer", toolkit.name, str(self.cann), "--toolkit"):
+            self.assertIn(text, output)
+        self.assertFalse(Path(self.env["MOCK_LOG"]).exists())
+
+    def test_missing_wheel_lists_incompatible_files_and_abi_requirement(self):
+        original = next(self.torch.glob("torch_npu-*"))
+        wrong = original.with_name(original.name.replace("cp310-cp310", "cp311-cp311"))
+        original.rename(wrong)
+        output = self.run_cli("--check", "--files-only", expected=1)
+        for text in ("Missing component: torch-npu wheel", "version 2.10.0.post4", str(self.torch),
+                     "Python cp310, ABI cp310", wrong.name, "--torch-npu-wheel"):
+            self.assertIn(text, output)
+
+    def test_missing_ops_lists_requested_chip_version_and_available_file(self):
+        original = next(self.cann.glob("*-ops_*.run"))
+        wrong = original.with_name(original.name.replace("9.1.0", "9.2.0"))
+        original.rename(wrong)
+        output = self.run_cli("--check", "--files-only", expected=1)
+        for text in ("Missing component: CANN ops installer", original.name, str(self.cann), wrong.name, "--soc / --ops"):
+            self.assertIn(text, output)
+
+    def test_missing_camodel_partner_identifies_the_exact_expected_zip(self):
+        for missing, component in ((MAIN, "main"), (CONFIG, "configuration")):
+            with self.subTest(missing=missing):
+                path = self.cam / missing
+                content = path.read_bytes()
+                path.unlink()
+                output = self.run_cli(*self.simulation(), "--check", "--files-only", expected=1)
+                for text in (f"Missing component: CAModel {component} ZIP", f"Expected: {missing}", str(self.cam), "--camodel-archive"):
+                    self.assertIn(text, output)
+                path.write_bytes(content)
+
+    def test_missing_simulation_init_identifies_script_and_option(self):
+        (self.cam / "init.sh").unlink()
+        output = self.run_cli(*self.simulation(), "--check", "--files-only", expected=1)
+        for text in ("Missing component: CAModel init.sh", "Expected: init.sh", str(self.cam), "--camodel-init"):
+            self.assertIn(text, output)
+
+    def test_missing_explicit_file_takes_priority_over_unrecorded_versions(self):
+        original = next(self.torch.glob("torch_npu-*"))
+        missing = original.with_name(original.name.replace("post4", "post6"))
+        output = self.run_cli("--torch-npu-version", "2.10.0", "--torch-npu-wheel", str(missing),
+                              "--check", "--files-only", expected=1)
+        self.assertIn("Missing component: torch-npu wheel", output)
+        self.assertIn(missing.name, output)
+        self.assertNotIn("Version combination is unrecorded", output)
+
     def test_ambiguous_wheels_require_explicit_selection(self):
         original = next(self.torch.glob("torch_npu*"))
         second = self.torch / original.name.replace("manylinux_2_28", "manylinux2014")
@@ -198,6 +249,9 @@ class BuilderTests(unittest.TestCase):
         output = self.run_cli("--torch-npu-version", "2.10.0", "--check", "--files-only", expected=1)
         self.assertIn("Version combination is unrecorded", output)
         self.assertIn("torch-npu=2.10.0.post6", output)
+        self.assertIn("MATCH Torch=2.10.0+cpu", output)
+        self.assertIn("DIFF  torch-npu=2.10.0.post6", output)
+        self.assertIn("recorded=2.10.0.post4", output)
         self.run_cli("--torch-npu-version", "2.10.0", "--allow-unverified", "--check", "--files-only")
 
     def test_soc_family_resolves_case_insensitively_and_keeps_same_image(self):
@@ -280,6 +334,7 @@ class BuilderTests(unittest.TestCase):
         output = self.run_cli(*args, "--check", "--files-only", expected=1)
         self.assertIn("Resolved torch-npu version: 2.7.1 -> 2.7.1.post5.dev20261111", output)
         self.assertIn("Version combination is unrecorded", output)
+        self.assertIn("DIFF  torch-npu=2.7.1.post5.dev20261111", output)
         output = self.run_cli(*args, "--allow-unverified")
         report = self.reports()[0].parent
         self.assertIn("torch_npu=2.7.1.post5.dev20261111\n", (report / "manifest.txt").read_text())

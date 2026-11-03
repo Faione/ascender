@@ -9,7 +9,7 @@ import re
 
 from . import archives, chips, wheels
 from .config import BuildConfig, clean_text
-from .errors import require
+from .errors import ToolError, missing_material, require
 
 PROJECT = Path(__file__).resolve().parents[1]
 
@@ -46,7 +46,9 @@ def choose(explicit: str, directory: Path, pattern: str, preview: bool) -> Path:
         return Path(explicit).absolute()
     matches = sorted(path for path in directory.glob(pattern) if path.is_file())
     require(len(matches) <= 1, f"Multiple candidates for {pattern} in {directory}; specify the exact file.")
-    require(bool(matches) or preview, f"Missing {pattern} in {directory}. Use --materials for guidance.")
+    if not matches and not preview:
+        raise missing_material("CANN Toolkit installer", pattern, directory, "--toolkit",
+                               sorted(path for path in directory.glob("*.run") if path.is_file()))
     return matches[0] if matches else directory / pattern
 
 
@@ -75,49 +77,75 @@ def resolve(config: BuildConfig) -> Materials:
     return selected
 
 
-def validate_pair(packages: list[Path]) -> None:
-    require(bool(packages), "No *ESLMODEL*.zip files; place the main/config pair in materials/camodel/.")
+def validate_pair(packages: list[Path], directory: Path) -> None:
+    if not packages:
+        raise missing_material("CAModel main/config ZIP pair", "*ESLMODEL*.zip and its matching *_config.zip",
+                               directory, "--camodel-archive (twice)", summary="No *ESLMODEL*.zip files were selected.")
     require(len({path.name for path in packages}) == len(packages), "Duplicate CAModel ZIP name.")
+    if len(packages) == 1:
+        path = packages[0]
+        is_config = path.name.endswith("_config.zip")
+        expected = path.name[:-11] + ".zip" if is_config else path.stem + "_config.zip"
+        component = "CAModel main ZIP" if is_config else "CAModel configuration ZIP"
+        raise missing_material(component, expected, path.parent, "--camodel-archive (twice)", packages,
+                               summary=f"Incomplete CAModel main/config pair: missing {component}.")
     require(len(packages) == 2, "Expected one CAModel main/config pair; use --camodel-archive to select two packages.")
     names = {path.name for path in packages}
     main = [name for name in names if not name.endswith("_config.zip")]
     require(len(main) == 1 and bool(re.fullmatch(r"x86_64_ESLMODEL_[A-Za-z0-9_.-]+\.zip", main[0])),
             "Expected x86_64_ESLMODEL_<model>_<version>.zip and its _config.zip package.")
-    require(main[0][:-4] + "_config.zip" in names, "CAModel main/config package names do not match.")
+    expected = main[0][:-4] + "_config.zip"
+    if expected not in names:
+        raise missing_material("matching CAModel configuration ZIP in the selected pair", expected, directory,
+                               "--camodel-archive (twice)", packages, summary="CAModel main/config package names do not match.")
 
 
 def collect(config: BuildConfig, selected: Materials) -> list[Input]:
     result = []
 
-    def add(path: Path, destination: str) -> None:
+    def add(path: Path, destination: str, component: str = "", option: str = "") -> None:
         clean_text(str(path))
-        require(path.is_file() and path.stat().st_size > 0, f"Missing, unreadable or empty input: {path}")
-        result.append(Input(path, destination, digest(path)))
+        component = component or destination
+        if not path.is_file():
+            if not option:
+                raise ToolError(f"Missing project file: {component}\n  Expected path: {path}\n  Action: restore a complete project checkout.")
+            raise missing_material(component, path.name, path.parent, option)
+        if path.stat().st_size == 0:
+            raise ToolError(f"Invalid material: {component}\n  Problem: empty input file\n  Path: {path}\n  Action: replace it with a complete file.")
+        try:
+            checksum = digest(path)
+        except PermissionError as error:
+            raise ToolError(f"Unreadable material: {component}\n  Path: {path}\n  Action: grant the current user read access.") from error
+        result.append(Input(path, destination, checksum))
 
     require(selected.toolkit.name.lower() == f"ascend-cann-toolkit_{config.cann_version}_linux-x86_64.run",
             f"Toolkit filename/version/architecture mismatch: {selected.toolkit}")
     require(selected.ops.name.lower() == f"ascend-cann-{config.soc}-ops_{config.cann_version}_linux-x86_64.run",
             f"Ops filename/model/version/architecture mismatch: {selected.ops}")
-    add(selected.toolkit, "packages/cann/toolkit.run")
-    add(selected.ops, "packages/cann/ops.run")
+    add(selected.toolkit, "packages/cann/toolkit.run", "CANN Toolkit installer", "--toolkit")
+    add(selected.ops, "packages/cann/ops.run", "CANN ops installer", "--ops")
     if not config.no_torch:
         require(selected.torch != selected.torch_npu, "Torch and torch-npu must be distinct wheel files.")
         for path, prefix in ((selected.torch, f"torch-{config.torch_version}"),
                              (selected.torch_npu, f"torch_npu-{config.torch_npu_version}")):
             require(any(fnmatchcase(path.name, f"{prefix}-cp310-cp310-{platform}_x86_64.whl")
                         for platform in ("manylinux*", "linux")), f"Wheel filename/version/ABI/architecture mismatch: {path}")
-            add(path, f"packages/torch/{path.name}")
+            package = "Torch" if path == selected.torch else "torch-npu"
+            option = "--torch-wheel" if path == selected.torch else "--torch-npu-wheel"
+            add(path, f"packages/torch/{path.name}", f"{package} wheel", option)
     if config.target == "simulation":
-        validate_pair(selected.archives)
+        validate_pair(selected.archives, config.materials_root.absolute() / "camodel")
         for path in selected.archives:
-            add(path, f"camodel/archives/{path.name}")
+            add(path, f"camodel/archives/{path.name}", f"CAModel ZIP {path.name}", "--camodel-archive")
         archives.validate(selected.archives)
         for path, name in ((selected.init, "init.sh"), (selected.env, "env.sh"), (selected.check, "check.sh")):
             if path is not None:
-                add(path, f"camodel/{name}")
+                option = {"init.sh": "--camodel-init", "env.sh": "--camodel-env", "check.sh": "--camodel-check"}[name]
+                add(path, f"camodel/{name}", f"CAModel {name}", option)
     for value, name in ((config.pip_constraints, "constraints.txt"), (config.post_install, "post-install.sh")):
         if value:
-            add(Path(value).absolute(), f"config/{name}")
+            option = "--pip-constraints" if name == "constraints.txt" else "--post-install"
+            add(Path(value).absolute(), f"config/{name}", name, option)
     add(PROJECT / "Dockerfile", "Dockerfile")
     for path in sorted((PROJECT / "scripts").glob("*.sh")):
         add(path, f"scripts/{path.name}")

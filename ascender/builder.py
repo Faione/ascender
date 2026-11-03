@@ -11,7 +11,6 @@ def build(config, backend=Docker.local):
     status = 1
     try:
         selected = materials.resolve(config)
-        config.validate_compatibility()
         if config.mode == "materials":
             reporting.materials_help(config, selected)
             return
@@ -20,6 +19,7 @@ def build(config, backend=Docker.local):
             print("Image: pending (input hashes and local base image ID are resolved at check/build time)")
             return
         inputs = materials.collect(config, selected)
+        config.validate_compatibility()
         if config.files_only:
             print("PASS: local materials (package execution/ABI checks deferred to Docker).")
             return
