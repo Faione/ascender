@@ -32,16 +32,45 @@ class RuntimeConfigTests(unittest.TestCase):
         for key in ("MOCK_CP_FAIL", "MOCK_PASSWD", "MOCK_GROUP", "DOCKER_HOST"):
             self.env.pop(key, None)
 
-    def run_prepare(self, *args, expected=0):
+    def run_prepare(self, *args, expected=0, default_output=False):
+        output_args = [] if default_output else ["--output", str(self.output / "compose.yaml")]
         result = subprocess.run([sys.executable, str(ROOT / "prepare_runtime.py"),
                                  "--image", self.image, "--code-dir", str(self.code),
-                                 "--output-dir", str(self.output), "--uid", "1234", "--gid", "2345", *args],
-                                env=self.env, text=True, capture_output=True)
+                                 *output_args, "--uid", "1234", "--gid", "2345", *args],
+                                cwd=self.path, env=self.env, text=True, capture_output=True)
         self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
         return result
 
     def config(self):
         return (self.output / "compose.yaml").read_text()
+
+    def test_default_output_is_in_calling_directory(self):
+        result = self.run_prepare(default_output=True)
+        self.assertTrue((self.path / "compose.yaml").is_file())
+        self.assertTrue((self.path / "home").is_dir())
+        self.assertTrue((self.path / "identity/passwd").is_file())
+        self.assertIn(str(self.path / "compose.yaml"), result.stdout)
+        self.assertFalse(self.output.exists())
+
+    def test_relative_custom_file_creates_parent_and_prints_matching_commands(self):
+        self.output = (self.path / "nested/custom runtime").resolve()
+        destination = self.output / "dev.yaml"
+        result = self.run_prepare("-o", "nested/custom runtime/dev.yaml")
+        self.assertTrue(destination.is_file())
+        self.assertFalse((self.output / "compose.yaml").exists())
+        self.assertTrue((self.output / "identity/passwd").is_file())
+        self.assertIn("source: '" + str(self.output / "home") + "'", destination.read_text())
+        self.assertIn("-f '" + str(destination) + "' up -d", result.stdout)
+        self.assertIn("-f '" + str(destination) + "' exec ascend bash", result.stdout)
+
+    def test_invalid_output_paths_fail_before_docker(self):
+        blocked = self.path / "file-parent"
+        blocked.write_text("preserve")
+        for destination in (self.path, blocked / "compose.yaml", self.path / "home", self.path / "identity"):
+            with self.subTest(destination=destination):
+                self.run_prepare("--output", str(destination), expected=1)
+        self.assertFalse(Path(self.env["MOCK_LOG"]).exists())
+        self.assertEqual(blocked.read_text(), "preserve")
 
     def test_simulation_has_complete_settings_independent_of_environment(self):
         self.run_prepare()

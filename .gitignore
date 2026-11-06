@@ -1,5 +1,9 @@
 /build/
 /materials/
+/compose.yaml
+/home/
+/identity/
+/.prepare-runtime.*/
 __pycache__/
 *.pyc
 .DS_Store

@@ -21,7 +21,7 @@ def clean_text(value: str) -> str:
 @dataclass
 class RuntimeConfig:
     code_dir: Path | None = None
-    output_dir: Path | None = None
+    output: Path = Path("compose.yaml")
     image: str = ""
     target: str | None = None
     uid: str | None = None

@@ -631,7 +631,7 @@ class BuilderTests(unittest.TestCase):
         (runtime / "home/cache.txt").write_text("keep")
         command = [sys.executable, str(ROOT / "prepare_runtime.py"),
                    "--image", image_ref.strip(), "--code-dir", str(code),
-                   "--output-dir", str(runtime), "--uid", "1234", "--gid", "2345",
+                   "--output", str(runtime / "compose.yaml"), "--uid", "1234", "--gid", "2345",
                    "--runtime-subnet", "192.168.241.0/24"]
         failed = subprocess.run(command, env=dict(self.env, MOCK_CP_FAIL="1"), text=True, capture_output=True)
         self.assertEqual(failed.returncode, 24, failed.stdout + failed.stderr)

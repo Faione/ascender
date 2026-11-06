@@ -107,6 +107,8 @@ BuildConfig 与 RuntimeConfig 分别服务两个入口。builder 不导入运行
 
 `runtime` 准备资源与私有暂存目录；所有校验和账号准备成功后，发布只读账号副本及 Compose，保留 HOME。NPU 检查字符设备、实际 GID 和驱动路径；仿真不需要设备。用户附加组通过 --group-add 显式配置。
 
+prepare_runtime.py 通过 --output/-o 指定 Compose 文件路径，默认调用目录下的 compose.yaml；自动创建父目录，home/identity 放在文件旁。自定义文件名用于发布配置及打印启动命令；同一父目录中的配置共用 HOME 和账号副本，独立环境使用不同目录。
+
 两个目标统一使用显式 IPAM 配置的项目 bridge 网络，默认子网 192.168.240.0/24。prepare_runtime.py 的 --runtime-subnet 可指定其他私有 IPv4 CIDR，不参与镜像指纹。工具不扫描或修改宿主机路由；使用方核对目标网络并为同时运行的项目指定不同子网。已有网络修改地址池时需先 down 再生成配置并启动。
 
 `compose` 使用固定 schema 写入具体镜像、用户、设备、路径；单引号转义 YAML，$$ 避免 Compose 插值。长格式 bind mount 禁止自动创建源路径。无环境文件、无环境变量配置依赖、无第三方 YAML 库。

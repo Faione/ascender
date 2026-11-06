@@ -78,22 +78,32 @@ SoC 同样先精确匹配。若没有 `950` 的 ops 包且只有 `950dt` 或 `95
 python3 prepare_runtime.py \
   --image ascend-sim:sim-cann9.1.0-950dt-torch2.10.0_cpu-npu2.10.0.post4 \
   --code-dir /data/ascend-verify \
-  --output-dir /data/ascend-runtime \
   --runtime-subnet 192.168.240.0/24
 ```
 
-此命令生成 `/data/ascend-runtime/compose.yaml`、`home/` 和 `identity/`，并打印启动和进入命令；不重新构建镜像，也不启动容器。`--code-dir` 是整体挂载的验证工作目录，`--output-dir` 是运行配置和 HOME 的保存位置，重新生成时保留 HOME。更换工作目录或运行参数，只需重新执行此命令。
+未传 `--output` 时，在**执行命令的当前目录**生成 `compose.yaml`，同时创建 `home/` 和 `identity/`，并打印启动和进入命令。生成器不重新构建镜像，也不启动容器。`--code-dir` 是整体挂载的验证工作目录。
+
+如需指定文件的生成位置和名称，使用 `--output FILE` 或 `-o FILE`：
+
+```bash
+python3 prepare_runtime.py \
+  --image ascend-sim:sim-cann9.1.0-950dt-torch2.10.0_cpu-npu2.10.0.post4 \
+  --code-dir /data/ascend-verify \
+  --output /data/ascend-runtime/dev.yaml
+```
+
+此例生成 `/data/ascend-runtime/dev.yaml`，HOME 和账号副本保存在同目录的 `home/`、`identity/`。父目录不存在时自动创建，相对路径以执行命令的当前目录为基准。重新生成时保留 HOME；更换工作目录或运行参数，只需重新执行生成命令。
 
 生成的 Compose 已写入具体镜像、绝对挂载路径、root 身份、设备和子网，不需要设置 `ASCEND_IMAGE`、`LOCAL_*`、`CODE_DIR` 等环境变量，也不需要 `.env` 或 `--env-file`。其中 `environment` 仅为容器设置固定的 HOME 和缓存目录。
 
 仿真和 NPU 的 Compose 都显式使用 bridge 子网，默认 `192.168.240.0/24`。先确认目标服务器路由及已有 Docker 网络未占用该范围；有冲突时通过 `--runtime-subnet` 改为其他空闲私有 IPv4 网段，同时运行多个环境时为每个环境指定不同网段。此参数只用于 `prepare_runtime.py`，与构建时的 `--network` 无关。已有网络需先用原 Compose 执行 `down`，再生成新配置并 `up -d`，见[网络配置](docs/runtime.md#网络配置)。
 
-**4. 启动并进入容器。** 使用上一步生成的配置：
+**4. 启动并进入容器。** 以下使用默认生成的 `./compose.yaml`；若选择了自定义路径，将 `-f` 后的路径替换为实际文件，例如 `/data/ascend-runtime/dev.yaml`：
 
 ```bash
-docker compose -f /data/ascend-runtime/compose.yaml config
-docker compose -f /data/ascend-runtime/compose.yaml up -d
-docker compose -f /data/ascend-runtime/compose.yaml exec ascend bash
+docker compose -f ./compose.yaml config
+docker compose -f ./compose.yaml up -d
+docker compose -f ./compose.yaml exec ascend bash
 ```
 
 镜像需要已存在于目标服务器的本地 Docker 中。生成器不会启动容器；上面的 Compose 命令由用户执行。仿真和 NPU 的 Compose 均显式设置 `user: '0:0'`，容器及普通 `exec` 会话以 root 运行。另保留与宿主机 UID/GID 对应的 `developer` 账号记录，供按需切换身份，不影响默认 root 身份。容器中的验证材料路径为：
@@ -103,7 +113,7 @@ docker compose -f /data/ascend-runtime/compose.yaml exec ascend bash
 | `/data/ascend-verify/packages/mock/` | `/workspace/code/packages/mock/` |
 | `/data/ascend-verify/packages/ops_transformer/` | `/workspace/code/packages/ops_transformer/` |
 | `/data/ascend-verify/ttk/` | `/workspace/code/ttk/` |
-| `/data/ascend-runtime/home/` | `/workspace/home`（`$HOME`，可持久保存安装结果和缓存） |
+| Compose 文件所在目录的 `home/` | `/workspace/home`（`$HOME`，可持久保存安装结果和缓存） |
 
 **5. 在容器内安装业务包并运行 TTK。** 先按 mock 和 ops_transformer 安装包的发布说明安装、加载各自的环境脚本，使用 `$HOME` 下可写的安装目录。安装参数、vendor 和激活脚本路径以实际交付包为准；组合包已包含的组件按其说明处理。
 
@@ -276,7 +286,7 @@ Python 依赖只按实际声明安装：Torch/torch-npu wheel 由 pip 解析依�
 - PIP 源写入所有用户可读的 `/etc/pip.conf`，root、developer 和后续用户默认共享；HTTP 源同时写入对应的 `trusted-host`。不持久化 `PIP_INDEX_URL`，允许按 pip 的优先级覆盖。strict 构建检查 root 和非 root 均可读取源配置。
 - `--apt-package vim --apt-package htop`、`--pip-package pytest --pip-package 'numpy<2'` 可重复。PIP 参数接受包名、extras 和版本约束，不接受直接 URL、VCS、markers 或选项；附加约束使用 `--pip-constraints`。
 - `--post-install` 指定公共安装阶段执行的 Bash 脚本，先于 CAModel 初始化；strict 下在执行后校验核心版本。
-- `build.py` 只制作镜像；`prepare_runtime.py` 独立接收 `--image`、`--code-dir`、`--output-dir` 及账号、设备、驱动和子网参数，生成 Compose。运行配置参数不参与镜像命名和内容指纹。
+- `build.py` 只制作镜像；`prepare_runtime.py` 独立接收 `--image`、`--code-dir`、`--output` 及账号、设备、驱动和子网参数，生成 Compose。运行配置参数不参与镜像命名和内容指纹。
 - `--network none` 仅禁用 RUN 网络，当前不是完整离线安装方案。`--no-cache` 不删除全局缓存。
 
 支持的环境变量为 `ASCEND_DEV_TARGET`、`ASCEND_DEV_SOC`、`ASCEND_DEV_CANN_VERSION`、`ASCEND_DEV_TORCH_VERSION`、`ASCEND_DEV_TORCH_NPU_VERSION`、`ASCEND_DEV_BASE_IMAGE`、`ASCEND_DEV_MATERIALS_ROOT`、`ASCEND_DEV_MIRROR_URL`、`ASCEND_DEV_SIMU_SOC`、`ASCEND_DEV_ESL_SOC_VERSION`、`ASCEND_DEV_ESL_HARDWARE_VERSION`（后三项仅仿真）。无 tag 配置变量。运行配置工具不依赖这些变量。
@@ -330,15 +340,16 @@ ascend-sim:sim-cann9.1.0-950-torch2.7.1-npu2.7.1
 ```bash
 python3 prepare_runtime.py \
   --image ascend-sim:sim-cann9.1.0-950dt-torch2.10.0_cpu-npu2.10.0.post4 \
-  --code-dir /data/operator-project \
-  --output-dir /data/ascend-runtime
+  --code-dir /data/operator-project
 
-docker compose -f /data/ascend-runtime/compose.yaml config
-docker compose -f /data/ascend-runtime/compose.yaml up -d
-docker compose -f /data/ascend-runtime/compose.yaml exec ascend bash
+docker compose -f ./compose.yaml config
+docker compose -f ./compose.yaml up -d
+docker compose -f ./compose.yaml exec ascend bash
 ```
 
-脚本仍按当前用户的 UID/GID 准备 `developer` 账号记录，支持显式切换身份时查询用户名；`--uid`、`--gid`、`--user` 只配置该账号，不改变 Compose 的 root 运行身份。生成的 Compose 使用具体值，无需 export、`.env` 或 `--env-file`。NPU 自动读取设备 GID 并加入只读驱动挂载；仿真不依赖设备和驱动。已有配置需重新生成并执行 `docker compose -f /data/ascend-runtime/compose.yaml up -d --force-recreate` 才生效。详见 [运行配置说明](docs/runtime.md)。
+默认文件是当前目录的 `compose.yaml`；追加 `--output /data/ascend-runtime/dev.yaml` 可指定其他文件路径，后续 Compose 命令的 `-f` 也使用该路径。
+
+脚本仍按当前用户的 UID/GID 准备 `developer` 账号记录，支持显式切换身份时查询用户名；`--uid`、`--gid`、`--user` 只配置该账号，不改变 Compose 的 root 运行身份。生成的 Compose 使用具体值，无需 export、`.env` 或 `--env-file`。NPU 自动读取设备 GID 并加入只读驱动挂载；仿真不依赖设备和驱动。已有配置需重新生成并执行 `docker compose -f ./compose.yaml up -d --force-recreate` 才生效。详见 [运行配置说明](docs/runtime.md)。
 
 ## 模块与开发检查
 

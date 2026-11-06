@@ -18,8 +18,8 @@ python3 build.py --target simulation \
 | `build.py --materials-root` | 构建阶段，准备安装材料；默认为 `./materials` |
 | `prepare_runtime.py --image` | 运行配置阶段，指定已有运行镜像的名称或 ID，无需报告文件 |
 | `prepare_runtime.py --code-dir` | 运行配置阶段，已存在且可读写的验证工作目录，可包含预构建安装包和 TTK 源码；整体挂载到 `/workspace/code` |
-| `prepare_runtime.py --output-dir` | 必填，工具自动创建的运行配置目录；固定目录可保留 HOME 和缓存 |
-| `home/`、`identity/` | 在运行配置目录下自动创建，无需额外指定 |
+| `prepare_runtime.py --output` | 可选，Compose 文件路径，默认当前目录的 `compose.yaml`；自动创建父目录 |
+| `home/`、`identity/` | 在 Compose 文件所在目录自动创建，无需额外指定；重新生成时保留 HOME |
 | NPU 设备和驱动路径 | 运行配置阶段检查服务器已安装资源；布局不同时通过专用参数覆盖 |
 
 运行参数只属于 `prepare_runtime.py`，不传给 `build.py`。运行配置生成失败不改变镜像或构建报告；成功构建即发布 `image-ref.txt`。Compose 项目名按输出目录命名，同时运行多个项目时使用不同的目录名和子网。
@@ -34,7 +34,7 @@ python3 build.py --target simulation \
 python3 /path/to/ascend_dev/prepare_runtime.py \
   --image ascend-sim:sim-cann9.1.0-950dt-torch2.10.0_cpu-npu2.10.0.post4 \
   --code-dir /data/operator-project \
-  --output-dir /data/ascend-runtime
+  --output /data/ascend-runtime/compose.yaml
 
 docker compose -f /data/ascend-runtime/compose.yaml config
 docker compose -f /data/ascend-runtime/compose.yaml up -d
@@ -55,6 +55,18 @@ ascend-runtime/
     └── identity.txt      # 镜像 ID、UID/GID、用户名
 ```
 
+省略 `--output` 时，在调用命令的当前目录生成 `compose.yaml`，并在同一目录创建 `home/` 和 `identity/`。例如只传入必填参数：
+
+```bash
+python3 /path/to/ascend_dev/prepare_runtime.py \
+  --image ascend-sim:sim-cann9.1.0-950dt-torch2.10.0_cpu-npu2.10.0.post4 \
+  --code-dir /data/ascend-verify
+
+docker compose -f ./compose.yaml up -d
+```
+
+也可使用 `-o /data/ascend-runtime/dev.yaml` 自定义目录和文件名；后续 Compose 命令使用同一个文件路径。同一目录中的配置共享 HOME 和账号副本，独立环境应放在不同目录，并使用不同子网。
+
 `image`、`user`、挂载路径、NPU 设备与 `group_add` 都是已确定的具体值，不引用 `ASCEND_IMAGE`、`LOCAL_UID`、`CODE_DIR` 等终端变量。固定的容器环境变量 HOME、XDG_CACHE_HOME 仍由 YAML 设置。路径中的字面 `$` 会转义为 Compose 的 `$$`，避免意外插值。[Compose 插值规则](https://docs.docker.com/reference/compose-file/interpolation/)
 
 ## 独立生成器参数
@@ -63,7 +75,7 @@ ascend-runtime/
 | --- | --- |
 | `--image IMAGE` | 必填，已有本地运行镜像的名称（含 tag）或 ID |
 | `--code-dir DIR` | 必填，已存在、可读写的外部代码目录 |
-| `--output-dir DIR` | 必填，生成配置、账号文件和 HOME 的目录 |
+| `--output FILE`、`-o FILE` | 可选，默认 `./compose.yaml`；可指定绝对或相对文件路径，自动创建父目录 |
 | `--target npu\|simulation` | 默认读取镜像标签 |
 | `--uid ID`、`--gid ID` | developer 账号记录的 UID/GID，默认 `os.getuid()`、`os.getgid()`，UID 必须非零；不改变容器的 root 运行身份 |
 | `--user NAME` | 账号记录名称，默认 `developer`；不改变容器的 root 运行身份 |
@@ -74,7 +86,7 @@ ascend-runtime/
 | `--dcmi-dir DIR` | NPU 专用，默认 `/usr/local/dcmi` |
 | `--install-info FILE` | NPU 专用，默认 `/etc/ascend_install.info` |
 
-`build.py --output-dir` 表示构建报告根目录；`prepare_runtime.py --output-dir` 表示运行配置和 HOME 的目录。`--code-dir`、`--runtime-subnet` 及账号、设备、驱动参数仅由运行配置命令接收，原构建参数 `--runtime-dir` 已移除。
+`build.py --output-dir` 表示构建报告根目录；`prepare_runtime.py --output` 表示 Compose 文件路径，原运行配置参数 `--output-dir` 已移除。HOME 和账号副本位于该文件的父目录。`--code-dir`、`--runtime-subnet` 及账号、设备、驱动参数仅由运行配置命令接收，原构建参数 `--runtime-dir` 已移除。
 
 准备脚本只读取命令行和自身默认值，不继承旧的 `LOCAL_*`、`ASCEND_IMAGE`、`NPU_*_GID` 等配置变量。相对路径以调用目录为基准，生成配置使用绝对路径；可以从任意目录通过 `-f` 使用。
 
@@ -103,7 +115,7 @@ docker compose -f /data/ascend-runtime/compose.yaml down
 python3 prepare_runtime.py \
   --image ascend-sim:sim-cann9.1.0-950dt-torch2.10.0_cpu-npu2.10.0.post4 \
   --code-dir /data/ascend-verify \
-  --output-dir /data/ascend-runtime \
+  --output /data/ascend-runtime/compose.yaml \
   --runtime-subnet 192.168.240.0/24
 
 docker compose -f /data/ascend-runtime/compose.yaml config
@@ -120,7 +132,7 @@ docker compose -f /data/ascend-runtime/compose.yaml up -d
 python3 /path/to/ascend_dev/prepare_runtime.py \
   --image ascend-dev:npu-cann9.1.0-950dt-torch2.10.0_cpu-npu2.10.0.post4 \
   --code-dir /data/operator-project \
-  --output-dir /data/ascend-runtime \
+  --output /data/ascend-runtime/compose.yaml \
   --device /dev/davinci1 \
   --device /dev/davinci_manager \
   --device /dev/hisi_hdc \

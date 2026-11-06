@@ -64,8 +64,9 @@ def build_options(argv=None):
 def runtime_options(argv=None):
     parser = argparse.ArgumentParser(description="Generate standalone Compose/account files; never start a container.", allow_abbrev=False)
     parser.add_argument("--image", required=True, help="Existing local Ascend runtime image name:tag or image ID")
-    for flag in ("code-dir", "output-dir"):
-        parser.add_argument(f"--{flag}", required=True, type=Path)
+    parser.add_argument("--code-dir", required=True, type=Path)
+    parser.add_argument("--output", "-o", type=Path, default=Path("compose.yaml"),
+                        help="Compose file path; default: ./compose.yaml. HOME/identity are stored beside it")
     parser.add_argument("--target", choices=("npu", "simulation"), help="Default: image label")
     parser.add_argument("--runtime-subnet", dest="subnet", help=f"Private IPv4 CIDR for the Compose bridge; default: {DEFAULT_RUNTIME_SUBNET} (not the build network)")
     parser.add_argument("--uid", help="Developer account UID; default: current non-root UID. Compose always runs as root")

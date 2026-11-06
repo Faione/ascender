@@ -42,11 +42,13 @@ def local_inputs(options):
     clean_text(str(code))
     require(code.is_dir() and os.access(code, os.R_OK | os.W_OK | os.X_OK),
             f"Source directory must exist and be readable/writable: {code}")
-    if options.output_dir is not None:
-        output = Path(options.output_dir).resolve()
-        clean_text(str(output))
-        require(not output.exists() or output.is_dir(), f"Runtime output must be a directory: {output}")
-    return user, code
+    destination = Path(options.output).resolve()
+    clean_text(str(destination))
+    require(not destination.exists() or destination.is_file(), f"--output must be a file path: {destination}")
+    require(not destination.parent.exists() or destination.parent.is_dir(),
+            f"Compose parent must be a directory: {destination.parent}")
+    require(destination.name not in ("home", "identity"), "--output cannot use reserved runtime directory names: home, identity.")
+    return user, code, destination
 
 
 def resources(options, target):
@@ -58,8 +60,8 @@ def resources(options, target):
 
 
 def prepare(options, backend=Docker.local):
-    user, code = local_inputs(options)
-    output = Path(options.output_dir).resolve()
+    user, code, destination = local_inputs(options)
+    output = destination.parent
     image = options.image
     require(bool(image) and not image.startswith("-") and not any(char.isspace() for char in image),
             "--image must be one local image name:tag or image ID without whitespace.")
@@ -85,9 +87,9 @@ def prepare(options, backend=Docker.local):
         (output / "identity").mkdir(exist_ok=True)
         for name in ("passwd", "group", "identity.txt"):
             (stage / "identity" / name).replace(output / "identity" / name)
-        config.replace(output / "compose.yaml")
-    print(f"Prepared {target} runtime: {output / 'compose.yaml'}")
+        config.replace(destination)
+    print(f"Prepared {target} runtime: {destination}")
     print(f"Runtime subnet: {options.network_subnet()}")
-    print(f"Start: docker compose -f {shlex.quote(str(output / 'compose.yaml'))} up -d")
-    print(f"Enter: docker compose -f {shlex.quote(str(output / 'compose.yaml'))} exec ascend bash")
-    return output / "compose.yaml"
+    print(f"Start: docker compose -f {shlex.quote(str(destination))} up -d")
+    print(f"Enter: docker compose -f {shlex.quote(str(destination))} exec ascend bash")
+    return destination
