@@ -1,6 +1,6 @@
 # 外部代码验证与 Compose 配置生成
 
-镜像制作与运行配置是两个独立命令：`build.py` 负责构建镜像，`prepare_runtime.py` 为已有镜像生成 Compose、HOME 和账号文件。仿真和 NPU 目标均显式设置 `user: '0:0'`，以 root 运行容器。日常 Compose 命令无需逐项 export，也不需要 `.env` 或 `--env-file`。生成器不启动业务容器。
+镜像制作与运行配置是两个独立命令：`build.py` 负责构建镜像，`prepare_runtime.py` 为已有镜像生成 Compose、HOME 和账号文件。仿真和 NPU 目标均显式设置 `user: '0:0'` 和 `privileged: true`，以 root 身份和特权模式运行容器。日常 Compose 命令无需逐项 export，也不需要 `.env` 或 `--env-file`。生成器不启动业务容器。
 
 ## 两步准备
 
@@ -168,7 +168,7 @@ docker compose -f /data/ascend-runtime/compose.yaml up -d --force-recreate
 
 重新生成会替换配置和账号副本，保留代码及 HOME 内容；不要让多个开发者或不同环境共用同一输出目录。生成文件可检查和手动编辑，后续重新生成会覆盖这些配置编辑。已有文件 bind mount 保留旧 inode，因此账号文件更新后应重建运行中的容器。
 
-已有配置需要重新生成，并用上述 `--force-recreate` 命令重建容器，root 配置才会生效。先运行 `config` 查看展开后的配置；启动后执行 `id`、`whoami`，应显示 UID/GID 为 0、用户名为 root，再确认 HOME、目录可写及宿主机产物属主。NPU 再验证最小设备运算；仿真再执行实际 CAModel 的最小测试。
+已有配置需要重新生成，并用上述 `--force-recreate` 命令重建容器，root 和 privileged 配置才会生效。先运行 `config` 查看展开后的配置；启动后执行 `id`、`whoami`，应显示 UID/GID 为 0、用户名为 root，再确认 HOME、目录可写及宿主机产物属主。NPU 再验证最小设备运算；仿真再执行实际 CAModel 的最小测试。
 
 镜像入口负责加载 CANN 和仿真环境。不要通过 Compose 覆盖 `entrypoint`；直接 `docker exec ... python3 ...` 时可使用 `/usr/local/bin/ascend-entrypoint` 包装。CAModel 日志、缓存和输出应写 HOME、项目输出目录或 `/tmp`；有安装树写入要求时需为具体子目录配置权限。
 

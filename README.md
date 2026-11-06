@@ -106,7 +106,7 @@ docker compose -f ./compose.yaml up -d
 docker compose -f ./compose.yaml exec ascend bash
 ```
 
-镜像需要已存在于目标服务器的本地 Docker 中。生成器不会启动容器；上面的 Compose 命令由用户执行。仿真和 NPU 的 Compose 均显式设置 `user: '0:0'`，容器及普通 `exec` 会话以 root 运行。另保留与宿主机 UID/GID 对应的 `developer` 账号记录，供按需切换身份，不影响默认 root 身份。容器中的验证材料路径为：
+镜像需要已存在于目标服务器的本地 Docker 中。生成器不会启动容器；上面的 Compose 命令由用户执行。仿真和 NPU 的 Compose 均显式设置 `user: '0:0'` 和 `privileged: true`，容器以特权模式运行，普通 `exec` 会话也使用 root。另保留与宿主机 UID/GID 对应的 `developer` 账号记录，供按需切换身份，不影响默认 root 身份。容器中的验证材料路径为：
 
 | 宿主机 | 容器内 |
 | --- | --- |
