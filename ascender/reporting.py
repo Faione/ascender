@@ -27,6 +27,8 @@ def show_plan(config, selected):
         if values:
             print(f"{name}: {', '.join(values)}")
     print(f"Constraints: {config.pip_constraints or 'none'} | post-install: {config.post_install or 'none'}")
+    if config.runtime:
+        print(f"Runtime code: {config.runtime.code_dir} | configuration: {config.runtime.output_dir or 'runtime/ in this build report'}")
 
 
 def materials_help(config, selected):

@@ -17,6 +17,22 @@ def clean_text(value: str) -> str:
 
 
 @dataclass
+class RuntimeConfig:
+    code_dir: Path | None = None
+    output_dir: Path | None = None
+    image_ref_file: Path | None = None
+    target: str | None = None
+    uid: str | None = None
+    gid: str | None = None
+    user: str = "developer"
+    group_add: list[str] = field(default_factory=list)
+    device: list[str] = field(default_factory=list)
+    driver_root: str | None = None
+    dcmi_dir: str | None = None
+    install_info: str | None = None
+
+
+@dataclass
 class BuildConfig:
     target: str = "npu"
     soc: str = ""
@@ -54,6 +70,7 @@ class BuildConfig:
     output_dir: Path = Path("build")
     mode: str = "build"
     files_only: bool = False
+    runtime: RuntimeConfig | None = None
     requested_components: dict[str, str] = field(default_factory=dict, init=False, repr=False)
 
     @property
@@ -76,9 +93,13 @@ class BuildConfig:
                 "camodel_lib_dir": self.camodel_lib_dir}
 
     def validate(self) -> None:
-        for value in vars(self).values():
-            for item in value if isinstance(value, list) else [value]:
-                clean_text(str(item))
+        for settings in (self, self.runtime):
+            if settings is not None:
+                for value in vars(settings).values():
+                    for item in value if isinstance(value, list) else [value]:
+                        clean_text(str(item))
+        require(self.runtime is None or self.runtime.code_dir is not None,
+                "Runtime options require --code-dir; use --runtime-dir to optionally choose their output directory.")
         require(self.target in ("npu", "simulation"), "--target must be npu or simulation.")
         require(self.mode in ("build", "materials", "preview", "check"), "Invalid operation mode.")
         require(not self.strict or self.mode in ("build", "check"), "--strict applies to --check or an actual build.")

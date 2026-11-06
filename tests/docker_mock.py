@@ -28,7 +28,8 @@ elif args[:2] == ["image", "inspect"]:
     elif "dev.ascend.target" in format_string:
         print(os.environ.get("MOCK_TARGET", "simulation"))
     else:
-        print("sha256:" + "a" * 64)
+        default = "b" if args[-1].startswith(("ascend-dev:", "ascend-sim:")) else "a"
+        print(os.environ.get("MOCK_IMAGE_ID", "sha256:" + default * 64))
 elif args[:2] == ["buildx", "build"]:
     context = Path(args[-1])
     snapshot = Path(os.environ["MOCK_SNAPSHOT"])
@@ -45,6 +46,8 @@ elif args[:1] == ["create"]:
     print("mock-report-container")
 elif args[:1] == ["cp"]:
     if os.environ.get("MOCK_CP_FAIL"):
+        sys.exit(24)
+    if os.environ.get("MOCK_ACCOUNT_CP_FAIL") and args[1].endswith((":/etc/passwd", ":/etc/group")):
         sys.exit(24)
     if args[1].endswith(":/etc/passwd"):
         Path(args[-1]).write_text(os.environ.get("MOCK_PASSWD", "root:x:0:0:root:/root:/bin/bash\nnobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin\n"))

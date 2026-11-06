@@ -48,7 +48,7 @@ class RuntimeConfigTests(unittest.TestCase):
         self.run_prepare()
         config = self.config()
         self.assertIn("image: 'ascend-dev:generated'", config)
-        self.assertIn("user: '1234:2345'", config)
+        self.assertIn("user: '0:0'", config)
         self.assertIn("pull_policy: never", config)
         self.assertIn("target: '/etc/passwd'\n        read_only: true", config)
         self.assertIn("target: '/etc/group'\n        read_only: true", config)
@@ -57,6 +57,7 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertNotIn("group_add:", config)
         self.assertIsNone(re.search(r"(?<!\$)\$(?:\{|[A-Za-z_])", config))
         self.assertIn("developer:*:1234:2345:", (self.output / "identity/passwd").read_text())
+        self.assertIn("root:x:0:0:root:/root:/bin/bash", (self.output / "identity/passwd").read_text())
         self.assertTrue((self.output / "home").is_dir())
         self.assertFalse((self.output / "identity/compose.env").exists())
         self.assertFalse(list(self.output.glob(".prepare-runtime.*")))
@@ -65,7 +66,7 @@ class RuntimeConfigTests(unittest.TestCase):
 
     def test_cli_identity_overrides_are_normalized(self):
         self.run_prepare("--uid", "001234", "--gid", "002345", "--user", "customuser")
-        self.assertIn("user: '1234:2345'", self.config())
+        self.assertIn("user: '0:0'", self.config())
         self.assertIn("customuser:*:1234:2345:", (self.output / "identity/passwd").read_text())
 
     def test_quotes_and_literal_dollars_are_preserved_in_paths(self):
@@ -93,6 +94,7 @@ class RuntimeConfigTests(unittest.TestCase):
                          "--driver-root", str(driver), "--dcmi-dir", str(dcmi), "--install-info", str(info),
                          "--group-add", "0077", "--group-add", "77", "--group-add", "88")
         config = self.config()
+        self.assertIn("user: '0:0'", config)
         self.assertIn("'/dev/null:/dev/null'", config)
         self.assertEqual(config.count("      - '77'\n"), 1)
         self.assertEqual(config.count("      - '88'\n"), 1)

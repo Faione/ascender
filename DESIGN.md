@@ -4,7 +4,7 @@
 
 ## 范围与运行条件
 
-工具消费用户准备的本地材料，制作 NPU 或仿真镜像，并输出报告。运行配置入口生成 Compose、可写 HOME 和容器账号副本，不启动业务容器。下载、上传、宿主机驱动安装、设备分配、业务代码编译和算子验证由使用方负责。
+工具消费用户准备的本地材料，制作 NPU 或仿真镜像，并输出报告。构建入口可通过 --code-dir 集成生成 Compose、可写 HOME 和容器账号副本；独立运行配置入口服务已有镜像。两者都不启动业务容器。下载、上传、宿主机驱动安装、设备分配、业务代码编译和算子验证由使用方负责。
 
 宿主机仅依赖 Python 3.9+ 标准库和 Docker CLI/Buildx；无需安装 Python 包。容器采用 Ubuntu 22.04、amd64、Python 3.10。Bash 仅用于容器内安装与供应方环境加载，不在 Python 中通过 shell=True 执行命令。
 
@@ -15,7 +15,7 @@
 | 模块 | 单一职责 | 修改或替换场景 |
 | --- | --- | --- |
 | `cli.py` | argparse 参数、环境默认值、退出码和信号边界 | CLI 形式调整 |
-| `config.py` | 构建数据对象、参数格式和框架基础版本一致性 | 参数规则变化 |
+| `config.py` | BuildConfig/RuntimeConfig 数据对象、参数格式和框架基础版本一致性 | 参数规则变化 |
 | `materials.py` | 固定目录定位、精确文件选择、材料校验和清单 | 目录布局或包名规则变化 |
 | `toolkits.py` | 从 Toolkit 文件名识别 CANN 版本并选择唯一安装器 | Toolkit 文件命名规则变化 |
 | `chips.py` | 将 SoC 具体型号或数字系列解析为唯一 ops 安装包 | 型号匹配策略变化 |
@@ -27,7 +27,7 @@
 | `context.py` | 临时构建上下文；仅 strict 复制后校验哈希 | 材料传入 Docker 的方式变化 |
 | `docker.py` | Docker CLI 执行、日志流、基础镜像检查和临时容器 | 更换容器后端 |
 | `reporting.py` | 计划、下载指导和构建报告 | 日志/报告格式变化 |
-| `builder.py` | 按阶段协调构建流程 | 构建步骤顺序变化 |
+| `builder.py` | 按阶段协调构建，可在完成镜像后调用运行配置模块 | 构建步骤顺序变化 |
 | `accounts.py` | UID/GID 校验和容器账号副本转换 | 用户身份方案变化 |
 | `compose.py` | 固定 Compose 结构的纯文本渲染 | 运行描述格式变化 |
 | `runtime.py` | 检查运行资源、暂存和发布运行配置 | 运行配置生成流程变化 |
@@ -76,7 +76,8 @@ set_env.sh 固定 ASCEND_DEVICE_ID=0；ESL_HARDWARE_VERSION 默认 0x1000，由 
 4. 镜像模块生成名称，报告模块记录参数、命名模式与校验状态；strict 才记录材料哈希。
 5. 上下文模块暂存选定输入，仅 strict 再次核对哈希。
 6. Docker 适配器执行 buildx --load --pull=false，逐块输出日志。
-7. strict 再次确认基础镜像未移动；用未启动容器导出包清单，只有全部成功才发布 image-ref.txt。
+7. strict 再次确认基础镜像未移动；用未启动容器导出包清单。
+8. 若指定 --code-dir，调用 runtime 生成本次镜像的配置；默认报告目录/runtime，可由 --runtime-dir 覆盖。只有全部成功才发布 image-ref.txt，失败阶段写入 result.txt。
 
 所有临时目录和容器使用上下文管理器清理；SIGINT/SIGTERM 经过退出边界触发 finally。失败记录退出码与阶段，保留构建日志。不执行 Docker 全局 prune，不使用业务容器执行检查。
 
@@ -98,9 +99,11 @@ scripts 中保留各安装阶段的 install-system/install-cann/install-torch、
 
 ## 运行配置与权限
 
-`prepare_runtime.py` 从构建报告读取镜像引用，通过本地镜像标签识别目标，默认使用当前 UID/GID 和 developer 用户名。仅支持本地 Docker，账号复制按检查得到的镜像 ID 进行。
+`prepare_runtime.py` 从构建报告读取镜像引用，通过本地镜像标签识别目标。仿真和 NPU 的 Compose 均固定以 root（0:0）运行；另外按当前 UID/GID 和 developer 用户名准备账号记录，供显式切换身份时使用。仅支持本地 Docker，账号复制按检查得到的镜像 ID 进行。
 
-`accounts` 从未启动容器复制 passwd/group，保留系统账号，仅替换指定 UID 记录；复用已有主组或新增 ascend-GID。冲突报错，不复制 shadow，不读写宿主机账号库。容器以目标身份直接运行，不在入口引入 root 初始化、降权或递归 chown。
+构建与独立生成入口共用 RuntimeConfig 和参数定义。builder 在实际构建/检查前复用 runtime 的只读输入和设备预检；构建后传入镜像引用及不可变 ID，校验引用未变化后生成配置。预览/材料指导不写运行文件，未指定 --code-dir 时保持纯镜像构建。运行参数不参与镜像指纹。独立入口保留用于已有镜像或不同的运行服务器。
+
+`accounts` 从未启动容器复制 passwd/group，保留 root 等系统账号，仅替换指定非 root UID 记录；复用已有主组或新增 ascend-GID。冲突报错，不复制 shadow，不读写宿主机账号库。--uid/--gid/--user 仅配置该账号记录，不改变 Compose 的 root 运行身份；不在入口引入身份切换或递归 chown。
 
 `runtime` 准备资源与私有暂存目录；所有校验和账号准备成功后，发布只读账号副本及 Compose，保留 HOME。NPU 检查字符设备、实际 GID 和驱动路径；仿真不需要设备。用户附加组通过 --group-add 显式配置。
 

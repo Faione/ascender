@@ -602,6 +602,94 @@ class BuilderTests(unittest.TestCase):
         self.assertTrue((snapshot / "config/manifest.txt").exists())
         self.assertNotIn(str(self.path), (report / "manifest.txt").read_text())
 
+    def runtime_args(self, *extra):
+        code = self.path / "operator code"
+        code.mkdir(exist_ok=True)
+        return [*self.simulation(), "--code-dir", str(code), "--uid", "1234", "--gid", "2345", *extra]
+
+    def test_build_generates_runtime_bundle_in_its_report_without_starting_container(self):
+        output = self.run_cli(*self.runtime_args())
+        report = self.reports()[0].parent
+        runtime = report / "runtime"
+        config = (runtime / "compose.yaml").read_text()
+        self.assertIn("name: 'ascend-" + report.name.rsplit("-", 1)[-1] + "'", config)
+        self.assertIn("image: '" + (report / "image-ref.txt").read_text().strip() + "'", config)
+        self.assertIn("user: '0:0'", config)
+        self.assertIn("source: '" + str((self.path / "operator code").resolve()) + "'", config)
+        self.assertTrue((runtime / "home").is_dir())
+        self.assertIn("developer:*:1234:2345:", (runtime / "identity/passwd").read_text())
+        self.assertIn("sha256:" + "b" * 64, (runtime / "identity/identity.txt").read_text())
+        self.assertIn("Start: docker compose", output)
+        self.assertIn("Enter: docker compose", output)
+        calls = [json.loads(line) for line in Path(self.env["MOCK_LOG"]).read_text().splitlines()]
+        self.assertFalse(any(any(item in ("run", "start", "exec", "pull") for item in call[:3]) for call in calls))
+
+    def test_custom_runtime_directory_preserves_home_and_does_not_affect_image_identity(self):
+        runtime = self.path / "persistent runtime"
+        (runtime / "home").mkdir(parents=True)
+        (runtime / "home/cache.txt").write_text("keep")
+        args = self.runtime_args("--runtime-dir", str(runtime), "--user", "operator")
+        baseline = self.run_cli(*self.simulation(), "--check", "--strict")
+        output = self.run_cli(*args, "--strict")
+        self.assertEqual(self.identity_from(baseline), self.identity_from(output))
+        self.assertEqual((runtime / "home/cache.txt").read_text(), "keep")
+        self.assertIn("user: '0:0'", (runtime / "compose.yaml").read_text())
+        self.assertIn("operator:*:1234:2345:", (runtime / "identity/passwd").read_text())
+        self.assertNotIn("\nname:", (runtime / "compose.yaml").read_text())
+        self.assertFalse((self.reports()[0].parent / "runtime").exists())
+
+    def test_integrated_npu_runtime_accepts_custom_device_and_driver_paths(self):
+        self.env["MOCK_TARGET"] = "npu"
+        driver, dcmi = self.path / "driver", self.path / "dcmi"
+        (driver / "lib64").mkdir(parents=True)
+        (driver / "version.info").write_text("fixture")
+        dcmi.mkdir()
+        info = self.path / "ascend_install.info"
+        info.write_text("fixture")
+        self.run_cli(*self.runtime_args("--target", "npu", "--device", "/dev/null",
+                                       "--driver-root", str(driver), "--dcmi-dir", str(dcmi), "--install-info", str(info)))
+        config = (self.reports()[0].parent / "runtime/compose.yaml").read_text()
+        self.assertIn("user: '0:0'", config)
+        self.assertIn("'/dev/null:/dev/null'", config)
+        self.assertIn("source: '" + str(driver.resolve()) + "/lib64'", config)
+        self.assertIn("target: '/usr/local/Ascend/driver/lib64'\n        read_only: true", config)
+
+    def test_runtime_options_and_paths_fail_before_building(self):
+        self.run_cli("--runtime-dir", str(self.path / "runtime"), expected=1)
+        self.run_cli(*self.runtime_args(), "--code-dir", str(self.path / "missing"), expected=1)
+        self.run_cli(*self.runtime_args(), "--device", "/dev/null", expected=1)
+        self.run_cli(*self.runtime_args(), "--uid", "0", expected=1)
+        self.assertFalse(Path(self.env["MOCK_LOG"]).exists())
+        self.assertFalse((self.path / "build").exists())
+
+    def test_check_and_preview_never_generate_runtime_files(self):
+        runtime = self.path / "not created"
+        args = self.runtime_args("--runtime-dir", str(runtime))
+        self.run_cli(*args, "--check", "--files-only")
+        self.run_cli(*args, "--dry-run")
+        self.assertFalse(runtime.exists())
+        self.assertFalse(Path(self.env["MOCK_LOG"]).exists())
+
+    def test_runtime_failure_is_reported_after_image_build_and_cleans_up(self):
+        self.env["MOCK_ACCOUNT_CP_FAIL"] = "1"
+        self.run_cli(*self.runtime_args(), expected=24)
+        report = self.reports()[0].parent
+        result = (report / "result.txt").read_text()
+        self.assertIn("phase=runtime\n", result)
+        self.assertIn("exit_code=24\n", result)
+        self.assertTrue((report / "image-id.txt").is_file())
+        self.assertFalse((report / "image-ref.txt").exists())
+        self.assertFalse((report / "runtime/compose.yaml").exists())
+        self.assertFalse(list((report / "runtime").glob(".prepare-runtime.*")))
+
+    def test_runtime_preparation_rejects_an_image_reference_changed_after_build(self):
+        self.env["MOCK_IMAGE_ID"] = "sha256:" + "a" * 64
+        output = self.run_cli(*self.runtime_args(), expected=1)
+        self.assertIn("Built image reference changed", output)
+        report = self.reports()[0].parent
+        self.assertIn("phase=runtime\n", (report / "result.txt").read_text())
+        self.assertFalse((report / "runtime/compose.yaml").exists())
+
     def test_cann_only_build_does_not_stage_torch(self):
         self.run_cli("--soc", "950", "--cann-version", "9.1.0", "--no-torch",
                      "--materials-root", str(self.materials), common=False)

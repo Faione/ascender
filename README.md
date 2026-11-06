@@ -6,9 +6,9 @@
 
 ## Quick Start
 
-以下以构建 Ascend950DT 的 `simulation` 目标为例。在装有 Python 3.9+、Docker 和 Buildx 的机器上，进入本项目目录执行，无需 `pip install`。
+以下以构建 Ascend950DT 的 `simulation` 环境，并使用预构建的 mock / ops_transformer 安装包和 TTK 源码进行验证为例。在装有 Python 3.9+、Docker 和 Buildx 的机器上，进入本项目目录执行。安装包由对应项目在其他位置构建并交付，验证机器只需准备安装包和 TTK 源码。
 
-**1. 准备材料和基础镜像。** 下载并按原名保存到以下目录，具体文件名及下载入口见[材料目录](#材料目录)和[下载说明](docs/downloads.md)：
+**1. 准备环境材料、验证材料和基础镜像。** 环境材料按原名保存到以下目录，具体文件名及下载入口见[材料目录](#材料目录)和[下载说明](docs/downloads.md)：
 
 ```text
 /data/ascend-materials/
@@ -17,19 +17,43 @@
 └── camodel/    # ESLMODEL 主包、同名 _config.zip；可选 init.sh/env.sh/check.sh
 ```
 
+将本次验证的三个材料放在另一个工作目录中：
+
+```text
+/data/ascend-verify/
+├── packages/
+│   ├── mock/              # 预构建 mock 安装包及随包说明/依赖声明
+│   └── ops_transformer/   # 预构建 ops_transformer 安装包及随包说明
+└── ttk/                   # TTK 源码及其依赖声明
+    └── validation/        # 本例约定的验证材料目录
+        ├── cases.csv
+        ├── assets/        # TTK 插件及其 golden 等资源
+        └── target.json    # mock 包要求的目标配置
+```
+
+`mock/` 和 `ops_transformer/` 保存各项目实际交付的安装包，例如 `.whl`、`.run`，保留原名；目录不要求包含这两个项目的源码。业务依赖由对应项目的 requirements、项目元数据或安装入口维护，本工具不预置 mock / TTK 专用 Python 包。
+
+TTK 所需插件/assets、golden、CSV 和 mock 目标配置应随上述安装包或 TTK 一同交付，并按其安装后的实际路径引用。普通算子 `.run` 不保证携带测试插件；若交付物缺少这些内容，需要由对应项目补齐发布材料，不能隐式依赖验证机器上的 ops_transformer 源码。环境中的型号、安装包支持的目标和 TTK 配置须配套，示例 `Ascend950DT` 不代表业务包已完成目标适配。
+
 仿真包例如 `x86_64_ESLMODEL_Ascend950DT_123A1.zip` 及 `x86_64_ESLMODEL_Ascend950DT_123A1_config.zip`。无需提前解压或提供初始化脚本；工具内置运行库替换、软链接及 `set_env.sh` 生成。`--soc` 选择 ops 包；`--simu-soc` 选择 CANN simulator 子目录，省略时使用材料中解析的 SoC。`--esl-soc-version` 仅设置导出的 `ESL_SOC_VERSION`，如 `Ascend950DT`，不影响运行库查找。`ESL_HARDWARE_VERSION` 默认 `0x1000`，可通过 `--esl-hardware-version` 覆盖。
 
 ```bash
 docker pull --platform linux/amd64 ubuntu:22.04
 ```
 
-**2. 构建 simulation 镜像。** 工具自动读取目录中的唯一一套材料，识别 CANN 版本、SoC、Torch/torch-npu 完整版本及仿真包配对，随后解压到 `/opt/CAModel/` 并执行初始化：
+**2. 构建 simulation 镜像并生成运行配置。** 以拥有 `/data/ascend-verify` 读写权限、可访问 Docker 的普通开发用户执行。工具自动选择环境材料并初始化 CAModel；`--code-dir` 将整个验证工作目录挂载进运行容器，并在构建成功时生成 Compose、HOME 和账号副本：
 
 ```bash
 python3 build.py \
   --target simulation \
-  --materials-root /data/ascend-materials
+  --materials-root /data/ascend-materials \
+  --code-dir /data/ascend-verify \
+  --runtime-dir /data/ascend-runtime
 ```
+
+`--runtime-dir` 可省略，默认放在本次报告目录的 `runtime/` 下；指定固定目录便于后续重建时保留 HOME 和缓存。省略 `--code-dir` 则只构建镜像，之后仍可单独使用 `prepare_runtime.py`。`--check` 会预检运行所需路径，`--check` / `--dry-run` / `--materials` 均不生成运行文件。
+
+`--materials-root` 只消费基础环境材料；`--code-dir` 中的业务安装包和 TTK 通过运行期挂载提供，不会被自动安装或复制进基础镜像。业务安装包的依赖、格式和完整性检查由各自项目处理。
 
 首次使用可先在上述命令末尾追加 `--check --files-only` 快速检查材料，或追加 `--check` 同时检查 Docker；默认不扫描全文件 SHA-256 和 ZIP CRC。需要深度检查时再追加 `--strict`，例如 `--check --files-only --strict`。检查通过后移除检查选项进行构建。若已准备仿真自检脚本，可追加 `--camodel-check check.sh`。
 
@@ -52,20 +76,51 @@ SoC 同样先精确匹配。若没有 `950` 的 ops 包且只有 `950dt` 或 `95
 
 构建和运行 simulation 环境均无需 NPU 设备。NPU 目标的独立构建命令见[构建](#构建)。
 
-**3. 生成运行配置并进入容器。** 构建成功后打印 `Report: ...`，该目录中的 `image-ref.txt` 保存自动生成的镜像名。将下面的 `/path/to/report/image-ref.txt` 替换为实际文件，`/data/operator-project` 替换为已存在、可读写的待验证代码目录。在目标 Docker 服务器上以开发用户执行：
+**3. 启动并进入容器。** 上一步已生成 `/data/ascend-runtime/compose.yaml`，无需再手动传递镜像名称或 `image-ref.txt`。工具也会打印完整的启动和进入命令：
 
 ```bash
-python3 prepare_runtime.py \
-  --image-ref-file /path/to/report/image-ref.txt \
-  --code-dir /data/operator-project \
-  --output-dir /data/ascend-runtime
-
 docker compose -f /data/ascend-runtime/compose.yaml config
 docker compose -f /data/ascend-runtime/compose.yaml up -d
 docker compose -f /data/ascend-runtime/compose.yaml exec ascend bash
 ```
 
-镜像需要已存在于目标服务器的本地 Docker 中。生成器不会启动容器；后面的 Compose 命令由用户执行。默认映射当前 UID/GID，用户名为 `developer`，源码挂载到 `/workspace/code`，可写 HOME 为 `/workspace/home`，无需 export 环境变量。
+镜像需要已存在于目标服务器的本地 Docker 中。生成器不会启动容器；上面的 Compose 命令由用户执行。仿真和 NPU 的 Compose 均显式设置 `user: '0:0'`，容器及普通 `exec` 会话以 root 运行。另保留与宿主机 UID/GID 对应的 `developer` 账号记录，供按需切换身份，不影响默认 root 身份。容器中的验证材料路径为：
+
+| 宿主机 | 容器内 |
+| --- | --- |
+| `/data/ascend-verify/packages/mock/` | `/workspace/code/packages/mock/` |
+| `/data/ascend-verify/packages/ops_transformer/` | `/workspace/code/packages/ops_transformer/` |
+| `/data/ascend-verify/ttk/` | `/workspace/code/ttk/` |
+| `/data/ascend-runtime/home/` | `/workspace/home`（`$HOME`，可持久保存安装结果和缓存） |
+
+**4. 在容器内安装业务包并运行 TTK。** 先按 mock 和 ops_transformer 安装包的发布说明安装、加载各自的环境脚本，使用 `$HOME` 下可写的安装目录。安装参数、vendor 和激活脚本路径以实际交付包为准；组合包已包含的组件按其说明处理。
+
+TTK 使用自己的项目元数据或 requirements 安装依赖。例如交付的 TTK 支持 editable 安装时，在容器 Bash 中执行：
+
+```bash
+cd /workspace/code/ttk
+python3 -m pip install --user -c /etc/ascend/core-constraints.txt -e .
+```
+
+这里的约束文件用于保持镜像已选择的 Torch/torch-npu 版本；若项目依赖与其冲突，应准备配套的环境材料。依赖包名及版本由业务项目声明，无需在 Ascender 构建命令中逐项添加。
+
+以 aicore_mock 的 QFA 验证入口为例，完成业务包安装和环境激活后，按上面的 `validation/` 布局执行。`SIM_SOC` 必须替换为交付包实际支持的仿真器标识，`target.json` 使用业务项目提供、与之配套的配置；这些业务设置不会由 Ascender 的构建参数自动生成：
+
+```bash
+export SIM_SOC='<实际仿真器 SoC 标识>'
+export QFA_METADATA_BACKEND=mock_aicpu
+export QFA_METADATA_CONFIG=/workspace/code/ttk/validation/target.json
+source /etc/ascend/camodel-env.sh
+
+cd /workspace/code/ttk
+python3 -m ttk e2e \
+  --backend npusim --sim-soc "$SIM_SOC" \
+  -i /workspace/code/ttk/validation/cases.csv \
+  --plugin /workspace/code/ttk/validation/assets \
+  --golden-mode Enable
+```
+
+重新加载 CAModel 环境是为了在业务环境激活后保持其库目录位于 `LD_LIBRARY_PATH` 首位。上述路径均使用容器内路径；更换业务安装包后按其发布说明重新安装，基础环境仍配套时可复用同一镜像。
 
 更多参数通过 `python3 build.py --help`、`python3 prepare_runtime.py --help` 查看；权限及 NPU 设备配置见[运行配置说明](docs/runtime.md)。
 
@@ -74,7 +129,7 @@ docker compose -f /data/ascend-runtime/compose.yaml exec ascend bash
 - 宿主机：Python 3.9+，支持 Linux/macOS；无需 pip 安装、虚拟环境、unzip、sha256sum、awk 或 sed。
 - 实际构建：Docker 和 Buildx；当前本地 context 使用 Unix socket，Engine builder 使用 `docker` driver，基础镜像已在同一 Engine 中。跨架构执行能力由用户准备。
 - 当前镜像平台：Ubuntu 22.04 / linux/amd64 / 容器 Python 3.10。CANN、SoC、Torch 和 torch-npu 从实际材料识别，下面的文件名只是示例。
-- 构建主机无需 NPU。运行 NPU 容器时才需要目标服务器的设备和驱动。
+- 仅构建镜像时无需 NPU。集成生成 NPU 运行配置时，应在具备设备和驱动的目标服务器执行；仿真目标不需要这些资源。
 
 工具检查目录材料的文件格式、配对、ABI、架构和版本一致性。真实镜像、NPU 和 CAModel 功能仍需在目标服务器验收。
 
@@ -209,6 +264,7 @@ Python 依赖只按实际声明安装：Torch/torch-npu wheel 由 pip 解析依�
 - PIP 源写入所有用户可读的 `/etc/pip.conf`，root、developer 和后续用户默认共享；HTTP 源同时写入对应的 `trusted-host`。不持久化 `PIP_INDEX_URL`，允许按 pip 的优先级覆盖。strict 构建检查 root 和非 root 均可读取源配置。
 - `--apt-package vim --apt-package htop`、`--pip-package pytest --pip-package 'numpy<2'` 可重复。PIP 参数接受包名、extras 和版本约束，不接受直接 URL、VCS、markers 或选项；附加约束使用 `--pip-constraints`。
 - `--post-install` 指定公共安装阶段执行的 Bash 脚本，先于 CAModel 初始化；strict 下在执行后校验核心版本。
+- `--code-dir DIR` 在构建后自动生成运行配置；`--runtime-dir DIR` 可选，默认使用本次报告的 `runtime/`。账号、设备、驱动参数与 `prepare_runtime.py` 共用，须同时指定 `--code-dir`。运行配置参数不参与镜像命名和内容指纹。
 - `--network none` 仅禁用 RUN 网络，当前不是完整离线安装方案。`--no-cache` 不删除全局缓存。
 
 支持的环境变量为 `ASCEND_DEV_TARGET`、`ASCEND_DEV_SOC`、`ASCEND_DEV_CANN_VERSION`、`ASCEND_DEV_TORCH_VERSION`、`ASCEND_DEV_TORCH_NPU_VERSION`、`ASCEND_DEV_BASE_IMAGE`、`ASCEND_DEV_MATERIALS_ROOT`、`ASCEND_DEV_MIRROR_URL`、`ASCEND_DEV_SIMU_SOC`、`ASCEND_DEV_ESL_SOC_VERSION`、`ASCEND_DEV_ESL_HARDWARE_VERSION`（后三项仅仿真）。无 tag 配置变量。运行配置工具不依赖这些变量。
@@ -255,7 +311,17 @@ ascend-sim:sim-cann9.1.0-950-torch2.7.1-npu2.7.1
 
 ## 外部代码验证
 
-在目标 Docker 服务器上以开发用户生成运行配置：
+构建时指定 `--code-dir` 即可集成生成流程。例如只需提供材料和源码目录：
+
+```bash
+python3 build.py --target simulation \
+  --materials-root /data/ascend-materials \
+  --code-dir /data/operator-project
+```
+
+默认生成 `本次报告目录/runtime/compose.yaml`、`home/` 和 `identity/`。用 `--runtime-dir /data/ascend-runtime` 可指定固定位置。HOME 和账号文件自动创建，不需要额外指定目录；仿真和 NPU 容器统一以 root（`0:0`）运行。
+
+NPU 目标默认使用本机设备和驱动路径；构建前会检查它们。如果在无 NPU 的机器上只制作镜像，可省略 `--code-dir`，之后在目标服务器用已有镜像生成配置：
 
 ```bash
 python3 prepare_runtime.py \
@@ -268,7 +334,7 @@ docker compose -f /data/ascend-runtime/compose.yaml up -d
 docker compose -f /data/ascend-runtime/compose.yaml exec ascend bash
 ```
 
-UID/GID 默认来自当前用户，用户名默认为 `developer`。脚本准备可写 HOME 和容器账号副本，避免 `I have no name!`。生成的 Compose 使用具体值，无需 export、`.env` 或 `--env-file`。NPU 自动读取设备 GID 并加入只读驱动挂载；仿真不依赖设备和驱动。详见 [运行配置说明](docs/runtime.md)。
+脚本仍按当前用户的 UID/GID 准备 `developer` 账号记录，支持显式切换身份时查询用户名；`--uid`、`--gid`、`--user` 只配置该账号，不改变 Compose 的 root 运行身份。生成的 Compose 使用具体值，无需 export、`.env` 或 `--env-file`。NPU 自动读取设备 GID 并加入只读驱动挂载；仿真不依赖设备和驱动。已有配置需重新生成并执行 `docker compose -f /data/ascend-runtime/compose.yaml up -d --force-recreate` 才生效。详见 [运行配置说明](docs/runtime.md)。
 
 ## 模块与开发检查
 
