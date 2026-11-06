@@ -41,19 +41,15 @@ TTK 所需插件/assets、golden、CSV 和 mock 目标配置应随上述安装�
 docker pull --platform linux/amd64 ubuntu:22.04
 ```
 
-**2. 构建 simulation 镜像并生成运行配置。** 以拥有 `/data/ascend-verify` 读写权限、可访问 Docker 的普通开发用户执行。工具自动选择环境材料并初始化 CAModel；`--code-dir` 将整个验证工作目录挂载进运行容器，并在构建成功时生成 Compose、HOME 和账号副本：
+**2. 构建 simulation 镜像。** 工具自动选择环境材料并初始化 CAModel，成功后在终端输出 `Report:` 报告目录，其中的 `image-ref.txt` 用于下一步生成运行配置：
 
 ```bash
 python3 build.py \
   --target simulation \
-  --materials-root /data/ascend-materials \
-  --code-dir /data/ascend-verify \
-  --runtime-dir /data/ascend-runtime
+  --materials-root /data/ascend-materials
 ```
 
-`--runtime-dir` 可省略，默认放在本次报告目录的 `runtime/` 下；指定固定目录便于后续重建时保留 HOME 和缓存。省略 `--code-dir` 则只构建镜像，之后仍可单独使用 `prepare_runtime.py`。`--check` 会预检运行所需路径，`--check` / `--dry-run` / `--materials` 均不生成运行文件。
-
-`--materials-root` 只消费基础环境材料；`--code-dir` 中的业务安装包和 TTK 通过运行期挂载提供，不会被自动安装或复制进基础镜像。业务安装包的依赖、格式和完整性检查由各自项目处理。
+`build.py` 只消费基础环境材料并制作镜像，不接收代码目录、账号、设备或运行网络参数。业务安装包和 TTK 在下一步通过运行期挂载提供，不会被自动安装或复制进基础镜像。业务安装包的依赖、格式和完整性检查由各自项目处理。
 
 首次使用可先在上述命令末尾追加 `--check --files-only` 快速检查材料，或追加 `--check` 同时检查 Docker；默认不扫描全文件 SHA-256 和 ZIP CRC。需要深度检查时再追加 `--strict`，例如 `--check --files-only --strict`。检查通过后移除检查选项进行构建。若已准备仿真自检脚本，可追加 `--camodel-check check.sh`。
 
@@ -76,7 +72,23 @@ SoC 同样先精确匹配。若没有 `950` 的 ops 包且只有 `950dt` 或 `95
 
 构建和运行 simulation 环境均无需 NPU 设备。NPU 目标的独立构建命令见[构建](#构建)。
 
-**3. 启动并进入容器。** 上一步已生成 `/data/ascend-runtime/compose.yaml`，无需再手动传递镜像名称或 `image-ref.txt`。工具也会打印完整的启动和进入命令：
+**3. 为已有镜像生成 Compose。** 在目标 Docker 服务器上，以拥有 `/data/ascend-verify` 读写权限、可访问 Docker 的普通开发用户执行。把下面的 `build/run-001` 替换为上一步 `Report:` 输出的实际目录；镜像须已存在于该服务器的本地 Docker 中：
+
+```bash
+python3 prepare_runtime.py \
+  --image-ref-file build/run-001/image-ref.txt \
+  --code-dir /data/ascend-verify \
+  --output-dir /data/ascend-runtime \
+  --runtime-subnet 192.168.240.0/24
+```
+
+此命令生成 `/data/ascend-runtime/compose.yaml`、`home/` 和 `identity/`，并打印启动和进入命令；不重新构建镜像，也不启动容器。`--code-dir` 是整体挂载的验证工作目录，`--output-dir` 是运行配置和 HOME 的保存位置，重新生成时保留 HOME。更换工作目录或运行参数，只需重新执行此命令。
+
+生成的 Compose 已写入具体镜像、绝对挂载路径、root 身份、设备和子网，不需要设置 `ASCEND_IMAGE`、`LOCAL_*`、`CODE_DIR` 等环境变量，也不需要 `.env` 或 `--env-file`。其中 `environment` 仅为容器设置固定的 HOME 和缓存目录。
+
+仿真和 NPU 的 Compose 都显式使用 bridge 子网，默认 `192.168.240.0/24`。先确认目标服务器路由及已有 Docker 网络未占用该范围；有冲突时通过 `--runtime-subnet` 改为其他空闲私有 IPv4 网段，同时运行多个环境时为每个环境指定不同网段。此参数只用于 `prepare_runtime.py`，与构建时的 `--network` 无关。已有网络需先用原 Compose 执行 `down`，再生成新配置并 `up -d`，见[网络配置](docs/runtime.md#网络配置)。
+
+**4. 启动并进入容器。** 使用上一步生成的配置：
 
 ```bash
 docker compose -f /data/ascend-runtime/compose.yaml config
@@ -93,7 +105,7 @@ docker compose -f /data/ascend-runtime/compose.yaml exec ascend bash
 | `/data/ascend-verify/ttk/` | `/workspace/code/ttk/` |
 | `/data/ascend-runtime/home/` | `/workspace/home`（`$HOME`，可持久保存安装结果和缓存） |
 
-**4. 在容器内安装业务包并运行 TTK。** 先按 mock 和 ops_transformer 安装包的发布说明安装、加载各自的环境脚本，使用 `$HOME` 下可写的安装目录。安装参数、vendor 和激活脚本路径以实际交付包为准；组合包已包含的组件按其说明处理。
+**5. 在容器内安装业务包并运行 TTK。** 先按 mock 和 ops_transformer 安装包的发布说明安装、加载各自的环境脚本，使用 `$HOME` 下可写的安装目录。安装参数、vendor 和激活脚本路径以实际交付包为准；组合包已包含的组件按其说明处理。
 
 TTK 使用自己的项目元数据或 requirements 安装依赖。例如交付的 TTK 支持 editable 安装时，在容器 Bash 中执行：
 
@@ -129,7 +141,7 @@ python3 -m ttk e2e \
 - 宿主机：Python 3.9+，支持 Linux/macOS；无需 pip 安装、虚拟环境、unzip、sha256sum、awk 或 sed。
 - 实际构建：Docker 和 Buildx；当前本地 context 使用 Unix socket，Engine builder 使用 `docker` driver，基础镜像已在同一 Engine 中。跨架构执行能力由用户准备。
 - 当前镜像平台：Ubuntu 22.04 / linux/amd64 / 容器 Python 3.10。CANN、SoC、Torch 和 torch-npu 从实际材料识别，下面的文件名只是示例。
-- 仅构建镜像时无需 NPU。集成生成 NPU 运行配置时，应在具备设备和驱动的目标服务器执行；仿真目标不需要这些资源。
+- 构建镜像无需 NPU。生成 NPU 运行配置时，应在具备设备和驱动的目标服务器执行；仿真目标不需要这些资源。
 
 工具检查目录材料的文件格式、配对、ABI、架构和版本一致性。真实镜像、NPU 和 CAModel 功能仍需在目标服务器验收。
 
@@ -264,7 +276,7 @@ Python 依赖只按实际声明安装：Torch/torch-npu wheel 由 pip 解析依�
 - PIP 源写入所有用户可读的 `/etc/pip.conf`，root、developer 和后续用户默认共享；HTTP 源同时写入对应的 `trusted-host`。不持久化 `PIP_INDEX_URL`，允许按 pip 的优先级覆盖。strict 构建检查 root 和非 root 均可读取源配置。
 - `--apt-package vim --apt-package htop`、`--pip-package pytest --pip-package 'numpy<2'` 可重复。PIP 参数接受包名、extras 和版本约束，不接受直接 URL、VCS、markers 或选项；附加约束使用 `--pip-constraints`。
 - `--post-install` 指定公共安装阶段执行的 Bash 脚本，先于 CAModel 初始化；strict 下在执行后校验核心版本。
-- `--code-dir DIR` 在构建后自动生成运行配置；`--runtime-dir DIR` 可选，默认使用本次报告的 `runtime/`。账号、设备、驱动参数与 `prepare_runtime.py` 共用，须同时指定 `--code-dir`。运行配置参数不参与镜像命名和内容指纹。
+- `build.py` 只制作镜像；`prepare_runtime.py` 独立接收 `--image-ref-file`、`--code-dir`、`--output-dir` 及账号、设备、驱动和子网参数，生成 Compose。运行配置参数不参与镜像命名和内容指纹。
 - `--network none` 仅禁用 RUN 网络，当前不是完整离线安装方案。`--no-cache` 不删除全局缓存。
 
 支持的环境变量为 `ASCEND_DEV_TARGET`、`ASCEND_DEV_SOC`、`ASCEND_DEV_CANN_VERSION`、`ASCEND_DEV_TORCH_VERSION`、`ASCEND_DEV_TORCH_NPU_VERSION`、`ASCEND_DEV_BASE_IMAGE`、`ASCEND_DEV_MATERIALS_ROOT`、`ASCEND_DEV_MIRROR_URL`、`ASCEND_DEV_SIMU_SOC`、`ASCEND_DEV_ESL_SOC_VERSION`、`ASCEND_DEV_ESL_HARDWARE_VERSION`（后三项仅仿真）。无 tag 配置变量。运行配置工具不依赖这些变量。
@@ -311,17 +323,9 @@ ascend-sim:sim-cann9.1.0-950-torch2.7.1-npu2.7.1
 
 ## 外部代码验证
 
-构建时指定 `--code-dir` 即可集成生成流程。例如只需提供材料和源码目录：
+镜像制作和运行配置使用两个独立命令。先用 `build.py` 构建镜像，再在目标服务器上用 `prepare_runtime.py` 读取构建报告中的 `image-ref.txt`，生成 Compose、HOME 和账号文件。构建镜像不检查业务代码、NPU 设备或宿主机驱动；生成 NPU 运行配置时才检查这些运行资源。
 
-```bash
-python3 build.py --target simulation \
-  --materials-root /data/ascend-materials \
-  --code-dir /data/operator-project
-```
-
-默认生成 `本次报告目录/runtime/compose.yaml`、`home/` 和 `identity/`。用 `--runtime-dir /data/ascend-runtime` 可指定固定位置。HOME 和账号文件自动创建，不需要额外指定目录；仿真和 NPU 容器统一以 root（`0:0`）运行。
-
-NPU 目标默认使用本机设备和驱动路径；构建前会检查它们。如果在无 NPU 的机器上只制作镜像，可省略 `--code-dir`，之后在目标服务器用已有镜像生成配置：
+运行配置命令示例：
 
 ```bash
 python3 prepare_runtime.py \

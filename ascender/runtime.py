@@ -31,11 +31,12 @@ def npu_resources(options):
 
 
 def local_inputs(options):
-    """Read-only preflight shared by integrated builds and standalone generation."""
+    """Validate runtime paths and account settings before Docker access."""
     for value in vars(options).values():
         for item in value if isinstance(value, list) else [value]:
             if item is not None:
                 clean_text(str(item))
+    options.network_subnet()
     user = accounts.User.current(options.uid, options.gid, options.user)
     code = Path(options.code_dir).resolve()
     clean_text(str(code))
@@ -56,16 +57,14 @@ def resources(options, target):
     return list(dict.fromkeys(accounts.numeric_id(value) for value in options.group_add)), [], []
 
 
-def prepare(options, backend=Docker.local, *, image=None, expected_image_id=None, project=None):
+def prepare(options, backend=Docker.local):
     user, code = local_inputs(options)
     output = Path(options.output_dir).resolve()
-    image = image if image is not None else Path(options.image_ref_file).read_text().strip()
+    image = Path(options.image_ref_file).read_text().strip()
     require(bool(image) and not image.startswith("-") and not any(char.isspace() for char in image),
             "image-ref.txt must contain one image reference.")
     docker = backend()
     image_id = docker.image_id(image)
-    require(expected_image_id is None or image_id == expected_image_id,
-            "Built image reference changed before runtime preparation; use the intended local image.")
     label = docker.target(image_id)
     target = options.target or label
     require(target in ("npu", "simulation"), "Image has no recognized target label; provide --target npu or simulation.")
@@ -79,7 +78,8 @@ def prepare(options, backend=Docker.local, *, image=None, expected_image_id=None
         stage = Path(temporary)
         accounts.prepare(docker, image_id, user, stage / "identity")
         config = stage / "compose.yaml"
-        config.write_text(compose.render(image, code, output, groups, devices, mounts, project=project))
+        config.write_text(compose.render(image, code, output, groups, devices, mounts,
+                                        subnet=options.network_subnet()))
         config.chmod(0o644)
         (output / "home").mkdir(exist_ok=True)
         (output / "identity").mkdir(exist_ok=True)
@@ -87,6 +87,7 @@ def prepare(options, backend=Docker.local, *, image=None, expected_image_id=None
             (stage / "identity" / name).replace(output / "identity" / name)
         config.replace(output / "compose.yaml")
     print(f"Prepared {target} runtime: {output / 'compose.yaml'}")
+    print(f"Runtime subnet: {options.network_subnet()}")
     print(f"Start: docker compose -f {shlex.quote(str(output / 'compose.yaml'))} up -d")
     print(f"Enter: docker compose -f {shlex.quote(str(output / 'compose.yaml'))} exec ascend bash")
     return output / "compose.yaml"

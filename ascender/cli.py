@@ -5,7 +5,7 @@ from pathlib import Path
 import signal
 import sys
 
-from .config import BuildConfig, RuntimeConfig, DEFAULT_MIRROR_URL
+from .config import BuildConfig, RuntimeConfig, DEFAULT_MIRROR_URL, DEFAULT_RUNTIME_SUBNET
 from .errors import ToolError
 
 
@@ -50,10 +50,6 @@ def build_options(argv=None):
     adjust.add_argument("--progress", choices=("plain", "auto", "tty"), default="plain")
     adjust.add_argument("--no-cache", action="store_true")
     adjust.add_argument("--output-dir", type=Path, default=Path("build"), help="Report parent directory (default: ./build)")
-    runtime = parser.add_argument_group("optional runtime configuration after building; never starts containers")
-    runtime.add_argument("--code-dir", type=Path, help="Existing source directory; enables Compose/account generation")
-    runtime.add_argument("--runtime-dir", type=Path, help="Default: runtime/ inside this build's report directory")
-    runtime_arguments(runtime)
     modes = parser.add_mutually_exclusive_group()
     for flag, mode, help_text in (("materials", "materials", "Show download/storage guidance without Docker"),
                                   ("dry-run", "preview", "Preview without Docker or file writes"),
@@ -62,16 +58,15 @@ def build_options(argv=None):
     parser.set_defaults(mode="build")
     parser.add_argument("--files-only", action="store_true", help="With --check: do not access Docker")
     parser.add_argument("--strict", action="store_true", help="Enable SHA-256, ZIP/installer checks, staged-copy and image verification; record a content fingerprint")
-    values = vars(parser.parse_args(argv))
-    options = RuntimeConfig(code_dir=values.pop("code_dir"), output_dir=values.pop("runtime_dir"),
-                            **{name: values.pop(name) for name in
-                               ("uid", "gid", "user", "group_add", "device", "driver_root", "dcmi_dir", "install_info")})
-    enabled = options.code_dir is not None or options.output_dir is not None or options.user != "developer" or any(
-        (options.uid, options.gid, options.group_add, options.device, options.driver_root, options.dcmi_dir, options.install_info))
-    return BuildConfig(**values, runtime=options if enabled else None)
+    return BuildConfig(**vars(parser.parse_args(argv)))
 
 
-def runtime_arguments(parser):
+def runtime_options(argv=None):
+    parser = argparse.ArgumentParser(description="Generate standalone Compose/account files; never start a container.", allow_abbrev=False)
+    for flag in ("image-ref-file", "code-dir", "output-dir"):
+        parser.add_argument(f"--{flag}", required=True, type=Path)
+    parser.add_argument("--target", choices=("npu", "simulation"), help="Default: image label")
+    parser.add_argument("--runtime-subnet", dest="subnet", help=f"Private IPv4 CIDR for the Compose bridge; default: {DEFAULT_RUNTIME_SUBNET} (not the build network)")
     parser.add_argument("--uid", help="Developer account UID; default: current non-root UID. Compose always runs as root")
     parser.add_argument("--gid", help="Developer account GID; default: current GID")
     parser.add_argument("--user", default="developer", help="Developer account name; default: developer. Does not change Compose's root user")
@@ -80,14 +75,6 @@ def runtime_arguments(parser):
     parser.add_argument("--driver-root", help="NPU only; default /usr/local/Ascend/driver")
     parser.add_argument("--dcmi-dir", help="NPU only; default /usr/local/dcmi")
     parser.add_argument("--install-info", help="NPU only; default /etc/ascend_install.info")
-
-
-def runtime_options(argv=None):
-    parser = argparse.ArgumentParser(description="Generate standalone Compose/account files; never start a container.", allow_abbrev=False)
-    for flag in ("image-ref-file", "code-dir", "output-dir"):
-        parser.add_argument(f"--{flag}", required=True, type=Path)
-    parser.add_argument("--target", choices=("npu", "simulation"), help="Default: image label")
-    runtime_arguments(parser)
     return RuntimeConfig(**vars(parser.parse_args(argv)))
 
 

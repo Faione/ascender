@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from ipaddress import IPv4Network
 from pathlib import Path, PurePosixPath
 import re
 
-from .errors import require
+from .errors import ToolError, require
 
 DEFAULT_MIRROR_URL = "http://mirrors.tools.huawei.com"
+DEFAULT_RUNTIME_SUBNET = "192.168.240.0/24"
 
 
 def clean_text(value: str) -> str:
@@ -30,6 +32,19 @@ class RuntimeConfig:
     driver_root: str | None = None
     dcmi_dir: str | None = None
     install_info: str | None = None
+    subnet: str | None = None
+
+    def network_subnet(self) -> str:
+        value = DEFAULT_RUNTIME_SUBNET if self.subnet is None else self.subnet
+        try:
+            network = IPv4Network(value)
+        except ValueError as error:
+            raise ToolError(f"--runtime-subnet must be an IPv4 network CIDR without host bits, e.g. {DEFAULT_RUNTIME_SUBNET}: {value}") from error
+        require(any(network.subnet_of(IPv4Network(block)) for block in
+                    ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")),
+                "--runtime-subnet must be within a private IPv4 range (10/8, 172.16/12 or 192.168/16).")
+        require(network.prefixlen <= 30, "--runtime-subnet must have room for a gateway and container (prefix at most /30).")
+        return str(network)
 
 
 @dataclass
@@ -70,7 +85,6 @@ class BuildConfig:
     output_dir: Path = Path("build")
     mode: str = "build"
     files_only: bool = False
-    runtime: RuntimeConfig | None = None
     requested_components: dict[str, str] = field(default_factory=dict, init=False, repr=False)
 
     @property
@@ -93,13 +107,9 @@ class BuildConfig:
                 "camodel_lib_dir": self.camodel_lib_dir}
 
     def validate(self) -> None:
-        for settings in (self, self.runtime):
-            if settings is not None:
-                for value in vars(settings).values():
-                    for item in value if isinstance(value, list) else [value]:
-                        clean_text(str(item))
-        require(self.runtime is None or self.runtime.code_dir is not None,
-                "Runtime options require --code-dir; use --runtime-dir to optionally choose their output directory.")
+        for value in vars(self).values():
+            for item in value if isinstance(value, list) else [value]:
+                clean_text(str(item))
         require(self.target in ("npu", "simulation"), "--target must be npu or simulation.")
         require(self.mode in ("build", "materials", "preview", "check"), "Invalid operation mode.")
         require(not self.strict or self.mode in ("build", "check"), "--strict applies to --check or an actual build.")

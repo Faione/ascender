@@ -1,5 +1,5 @@
 """Build workflow: coordinate modules without implementing their policies."""
-from . import context, materials, reporting, runtime
+from . import context, materials, reporting
 from .docker import Docker
 from .errors import require
 from .image import identify, image_reference
@@ -7,11 +7,6 @@ from .image import identify, image_reference
 
 def build(config, backend=Docker.local):
     config.validate()
-    if config.runtime:
-        config.runtime.target = config.target
-        if config.mode in ("build", "check"):
-            runtime.local_inputs(config.runtime)
-            runtime.resources(config.runtime, config.target)
     report = reporting.Report(config.output_dir) if config.mode == "build" else None
     status = 1
     try:
@@ -65,12 +60,6 @@ def build(config, backend=Docker.local):
                     "Base image changed during the build; rerun with a stable local base reference.")
         with docker.container(report.image_id) as container:
             docker.copy(container, "/usr/local/share/ascend/installed-packages.txt", report.directory / "installed-packages.txt")
-        if config.runtime:
-            report.phase = "runtime"
-            project = None if config.runtime.output_dir else "ascend-" + report.directory.name.rsplit("-", 1)[-1]
-            config.runtime.output_dir = config.runtime.output_dir or report.directory / "runtime"
-            runtime.prepare(config.runtime, backend=lambda: docker, image=image.reference,
-                            expected_image_id=report.image_id, project=project)
         report.write("manifest.txt", reporting.manifest(config, selected, image, complete=True))
         report.write("image-ref.txt", image.reference + "\n")
         report.phase = "complete"

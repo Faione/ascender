@@ -2,12 +2,18 @@
 import unittest
 from unittest.mock import patch
 
-from ascender.cli import build_options
+from ascender.cli import build_options, runtime_options
 from ascender.config import BuildConfig
 from ascender.errors import ToolError
 
 
 class ConfigurationTests(unittest.TestCase):
+    def test_runtime_subnet_defaults_and_cli_override(self):
+        args = ["--image-ref-file", "/image-ref.txt", "--code-dir", "/code", "--output-dir", "/runtime"]
+        self.assertEqual(runtime_options(args).network_subnet(), "192.168.240.0/24")
+        custom = runtime_options([*args, "--runtime-subnet", "10.254.240.0/24"])
+        self.assertEqual(custom.network_subnet(), "10.254.240.0/24")
+
     def test_default_mirror_and_normalized_origin(self):
         default = BuildConfig()
         default.validate()

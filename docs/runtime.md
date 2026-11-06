@@ -1,30 +1,28 @@
 # 外部代码验证与 Compose 配置生成
 
-构建时指定 `--code-dir`，或对已有镜像使用 `prepare_runtime.py`，都能生成具有具体镜像、路径和设备组的 `compose.yaml`。仿真和 NPU 目标均显式设置 `user: '0:0'`，以 root 运行容器。日常 Compose 命令无需逐项 export，也不需要 `.env` 或 `--env-file`。工具只制作镜像和生成运行配置，不启动业务容器。
+镜像制作与运行配置是两个独立命令：`build.py` 负责构建镜像，`prepare_runtime.py` 为已有镜像生成 Compose、HOME 和账号文件。仿真和 NPU 目标均显式设置 `user: '0:0'`，以 root 运行容器。日常 Compose 命令无需逐项 export，也不需要 `.env` 或 `--env-file`。生成器不启动业务容器。
 
-## 最小使用流程
+## 两步准备
 
-构建和运行位于同一台 Docker 服务器时，在项目目录中以普通开发用户执行：
+在项目目录构建镜像：
 
 ```bash
 python3 build.py --target simulation \
-  --materials-root /data/ascend-materials \
-  --code-dir /data/operator-project
+  --materials-root /data/ascend-materials
 ```
 
-`--code-dir` 是集成流程唯一新增的必填目录，必须已存在且当前用户可读写。构建成功后自动选用本次镜像，默认生成到本次报告的 `runtime/`，并打印启动和进入命令。追加 `--runtime-dir /data/ascend-runtime` 可使用固定目录，便于保留 HOME 和缓存。
+构建成功后，使用终端 `Report:` 输出的实际报告目录中的 `image-ref.txt` 执行下方运行配置命令。该命令在目标 Docker 服务器上执行，镜像须已存在于本地 Docker。更换代码、账号、设备或子网时只需重新生成运行配置，无需重建镜像。
 
-默认输出同时生成简短、独立的 Compose 项目名，区分不同构建的运行实例。指定固定 `--runtime-dir` 时沿用 Compose 按目录命名的方式，方便更新同一运行环境。
-
-| 路径 | 是否需要手动准备 |
+| 路径 | 使用阶段与要求 |
 | --- | --- |
-| `--materials-root` | 准备安装材料；默认为 `./materials` |
-| `--code-dir` | 准备验证工作目录，可同时放预构建安装包和 TTK 源码；整体挂载到 `/workspace/code` |
-| `--runtime-dir` | 可选，工具自动创建；默认是本次报告下的 `runtime/` |
-| `runtime/home/`、`runtime/identity/` | 自动创建，不需要单独配置 |
-| NPU 设备和驱动路径 | 使用服务器已安装资源；布局不同时通过专用参数覆盖 |
+| `build.py --materials-root` | 构建阶段，准备安装材料；默认为 `./materials` |
+| `prepare_runtime.py --image-ref-file` | 运行配置阶段，指定成功构建报告中的 `image-ref.txt` |
+| `prepare_runtime.py --code-dir` | 运行配置阶段，已存在且可读写的验证工作目录，可包含预构建安装包和 TTK 源码；整体挂载到 `/workspace/code` |
+| `prepare_runtime.py --output-dir` | 必填，工具自动创建的运行配置目录；固定目录可保留 HOME 和缓存 |
+| `home/`、`identity/` | 在运行配置目录下自动创建，无需额外指定 |
+| NPU 设备和驱动路径 | 运行配置阶段检查服务器已安装资源；布局不同时通过专用参数覆盖 |
 
-集成模式同样支持下表中的账号、组、设备和驱动参数。代码、身份及 NPU 资源会在实际构建前预检；`--check` 也预检但不生成运行文件，`--dry-run` / `--materials` 只展示计划。配置生成失败时报告阶段为 `runtime`，已经构建的镜像会保留；`image-ref.txt` 仍仅在完整流程成功后发布。运行路径不会进入镜像，也不影响镜像内容指纹。
+运行参数只属于 `prepare_runtime.py`，不传给 `build.py`。运行配置生成失败不改变镜像或构建报告；成功构建即发布 `image-ref.txt`。Compose 项目名按输出目录命名，同时运行多个项目时使用不同的目录名和子网。
 
 预构建包验证的完整目录及命令示例见 [Quick Start](../README.md#quick-start)：只需交付 mock 安装包、ops_transformer 安装包和 TTK 源码，两个构建仓库的源码留在构建机器。业务包在运行容器中按各自发布说明安装，依赖声明和业务测试由对应项目维护。
 
@@ -69,15 +67,50 @@ ascend-runtime/
 | `--target npu\|simulation` | 默认读取镜像标签 |
 | `--uid ID`、`--gid ID` | developer 账号记录的 UID/GID，默认 `os.getuid()`、`os.getgid()`，UID 必须非零；不改变容器的 root 运行身份 |
 | `--user NAME` | 账号记录名称，默认 `developer`；不改变容器的 root 运行身份 |
+| `--runtime-subnet CIDR` | Compose bridge 的私有 IPv4 网段，默认 `192.168.240.0/24`；两个目标均适用 |
 | `--group-add GID` | 可重复，增加共享项目等所需的补充组 |
 | `--device FILE` | NPU 专用，可重复；显式指定后替代默认设备清单 |
 | `--driver-root DIR` | NPU 专用，默认 `/usr/local/Ascend/driver` |
 | `--dcmi-dir DIR` | NPU 专用，默认 `/usr/local/dcmi` |
 | `--install-info FILE` | NPU 专用，默认 `/etc/ascend_install.info` |
 
-`build.py` 使用 `--runtime-dir` 指定运行配置位置，`--output-dir` 仍表示构建报告目录；无需传入 `--image-ref-file`。省略 `--code-dir` 表示只构建镜像，不能单独附带运行配置参数。
+`build.py --output-dir` 表示构建报告根目录；`prepare_runtime.py --output-dir` 表示运行配置和 HOME 的目录。`--code-dir`、`--runtime-subnet` 及账号、设备、驱动参数仅由运行配置命令接收，原构建参数 `--runtime-dir` 已移除。
 
 准备脚本只读取命令行和自身默认值，不继承旧的 `LOCAL_*`、`ASCEND_IMAGE`、`NPU_*_GID` 等配置变量。相对路径以调用目录为基准，生成配置使用绝对路径；可以从任意目录通过 `-f` 使用。
+
+## 网络配置
+
+仿真和 NPU 均使用项目独立的 bridge 网络，显式配置 IPAM 子网，默认不再由 Docker 自动选择地址池：
+
+```yaml
+networks:
+  default:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: '192.168.240.0/24'
+```
+
+`prepare_runtime.py` 支持 `--runtime-subnet CIDR`。该参数只控制运行网络，不影响镜像或构建参数 `--network`；网关和容器 IP 仍由 Docker 分配。输入必须是无主机位的私有 IPv4 网络地址，例如 `192.168.241.0/24`，需要至少能容纳网关和容器（前缀不大于 `/30`）。
+
+工具校验 CIDR 格式，不自动修改宿主机路由或探测目标服务器的网络冲突。生成前核对目标服务器的路由、VPN 和已有 Docker 子网；默认范围有重叠时指定其他空闲网段。多个 Compose 项目不能共用这一固定子网，应分别指定不同的网段。
+
+修改子网需要重建 Docker 网络，仅用 `up --force-recreate` 不足以更新网络配置。已有环境按以下顺序操作，无需重新构建镜像；第一步使用尚未修改的原 Compose：
+
+```bash
+docker compose -f /data/ascend-runtime/compose.yaml down
+
+python3 prepare_runtime.py \
+  --image-ref-file /data/build/run-001/image-ref.txt \
+  --code-dir /data/ascend-verify \
+  --output-dir /data/ascend-runtime \
+  --runtime-subnet 192.168.240.0/24
+
+docker compose -f /data/ascend-runtime/compose.yaml config
+docker compose -f /data/ascend-runtime/compose.yaml up -d
+```
+
+`down` 会停止本项目容器并移除其网络；验证目录和绑定挂载的 HOME 仍保留。新环境可直接生成配置后启动。
 
 ## NPU 配置
 

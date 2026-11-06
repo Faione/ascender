@@ -50,6 +50,7 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertIn("image: 'ascend-dev:generated'", config)
         self.assertIn("user: '0:0'", config)
         self.assertIn("pull_policy: never", config)
+        self.assertTrue(config.endswith("networks:\n  default:\n    driver: bridge\n    ipam:\n      config:\n        - subnet: '192.168.240.0/24'\n"))
         self.assertIn("target: '/etc/passwd'\n        read_only: true", config)
         self.assertIn("target: '/etc/group'\n        read_only: true", config)
         self.assertIn("source: '" + str(self.code.resolve()) + "'", config)
@@ -60,7 +61,12 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertIn("root:x:0:0:root:/root:/bin/bash", (self.output / "identity/passwd").read_text())
         self.assertTrue((self.output / "home").is_dir())
         self.assertFalse((self.output / "identity/compose.env").exists())
+        self.assertNotIn("env_file:", config)
         self.assertFalse(list(self.output.glob(".prepare-runtime.*")))
+        for name in ("LOCAL_UID", "LOCAL_GID", "LOCAL_USER", "ASCEND_IMAGE", "IDENTITY_DIR", "CODE_DIR"):
+            self.env.pop(name, None)
+        self.run_prepare()
+        self.assertEqual(self.config(), config)
         calls = [json.loads(line) for line in Path(self.env["MOCK_LOG"]).read_text().splitlines()]
         self.assertFalse(any(any(item in ("run", "start", "exec", "pull") for item in call[:3]) for call in calls))
 
@@ -68,6 +74,18 @@ class RuntimeConfigTests(unittest.TestCase):
         self.run_prepare("--uid", "001234", "--gid", "002345", "--user", "customuser")
         self.assertIn("user: '0:0'", self.config())
         self.assertIn("customuser:*:1234:2345:", (self.output / "identity/passwd").read_text())
+
+    def test_custom_subnet_and_invalid_networks_fail_before_docker(self):
+        for subnet in ("bad", "", "192.168.240.1/24", "192.168.240.0/33", "192.168.240.0/31",
+                       "192.168.240.1/32", "8.8.8.0/24", "127.0.0.0/8", "0.0.0.0/0", "fd00::/64"):
+            with self.subTest(subnet=subnet):
+                result = self.run_prepare("--runtime-subnet", subnet, expected=1)
+                self.assertIn("--runtime-subnet", result.stderr)
+        self.assertFalse(Path(self.env["MOCK_LOG"]).exists())
+        self.assertFalse(self.output.exists())
+        result = self.run_prepare("--runtime-subnet", "192.168.241.0/24")
+        self.assertIn("subnet: '192.168.241.0/24'", self.config())
+        self.assertIn("Runtime subnet: 192.168.241.0/24", result.stdout)
 
     def test_quotes_and_literal_dollars_are_preserved_in_paths(self):
         self.code = self.path / "operator's $cash ${CODE_DIR}"
@@ -92,9 +110,13 @@ class RuntimeConfigTests(unittest.TestCase):
         # Generic character devices exercise path/type checks without NPU hardware.
         self.run_prepare("--device", "/dev/null", "--device", "/dev/zero",
                          "--driver-root", str(driver), "--dcmi-dir", str(dcmi), "--install-info", str(info),
-                         "--group-add", "0077", "--group-add", "77", "--group-add", "88")
+                         "--group-add", "0077", "--group-add", "77", "--group-add", "88",
+                         "--runtime-subnet", "10.254.240.0/24")
         config = self.config()
         self.assertIn("user: '0:0'", config)
+        self.assertIn("subnet: '10.254.240.0/24'", config)
+        self.assertIsNone(re.search(r"(?<!\$)\$(?:\{|[A-Za-z_])", config))
+        self.assertNotIn("env_file:", config)
         self.assertIn("'/dev/null:/dev/null'", config)
         self.assertEqual(config.count("      - '77'\n"), 1)
         self.assertEqual(config.count("      - '88'\n"), 1)
