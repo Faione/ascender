@@ -11,12 +11,12 @@ python3 build.py --target simulation \
   --materials-root /data/ascend-materials
 ```
 
-构建成功后，使用终端 `Report:` 输出的实际报告目录中的 `image-ref.txt` 执行下方运行配置命令。该命令在目标 Docker 服务器上执行，镜像须已存在于本地 Docker。更换代码、账号、设备或子网时只需重新生成运行配置，无需重建镜像。
+构建成功后，将终端 `Built:` 输出的镜像名称传给下方运行配置命令的 `--image`，也可直接指定已有镜像的 ID，无需构建报告文件。该命令在目标 Docker 服务器上执行，镜像须已存在于本地 Docker。更换代码、账号、设备或子网时只需重新生成运行配置，无需重建镜像。
 
 | 路径 | 使用阶段与要求 |
 | --- | --- |
 | `build.py --materials-root` | 构建阶段，准备安装材料；默认为 `./materials` |
-| `prepare_runtime.py --image-ref-file` | 运行配置阶段，指定成功构建报告中的 `image-ref.txt` |
+| `prepare_runtime.py --image` | 运行配置阶段，指定已有运行镜像的名称或 ID，无需报告文件 |
 | `prepare_runtime.py --code-dir` | 运行配置阶段，已存在且可读写的验证工作目录，可包含预构建安装包和 TTK 源码；整体挂载到 `/workspace/code` |
 | `prepare_runtime.py --output-dir` | 必填，工具自动创建的运行配置目录；固定目录可保留 HOME 和缓存 |
 | `home/`、`identity/` | 在运行配置目录下自动创建，无需额外指定 |
@@ -32,7 +32,7 @@ python3 build.py --target simulation \
 
 ```bash
 python3 /path/to/ascend_dev/prepare_runtime.py \
-  --image-ref-file /data/build/run-001/image-ref.txt \
+  --image ascend-sim:sim-cann9.1.0-950dt-torch2.10.0_cpu-npu2.10.0.post4 \
   --code-dir /data/operator-project \
   --output-dir /data/ascend-runtime
 
@@ -41,7 +41,7 @@ docker compose -f /data/ascend-runtime/compose.yaml up -d
 docker compose -f /data/ascend-runtime/compose.yaml exec ascend bash
 ```
 
-镜像引用来自构建成功后生成的 `image-ref.txt`；不重新构建、不拉取镜像、不自定义 tag。准备脚本从镜像的 `dev.ascend.target` 标签识别 NPU 或仿真环境。没有该标签的兼容镜像，可用 `--target npu` 或 `--target simulation` 指定；与已有标签冲突时报错。
+`--image` 直接指定已安装 CANN、Torch 及相应仿真组件的运行镜像名称或 ID，不需要 `image-ref.txt`。生成器不重新构建、不拉取镜像、不创建新 tag。准备脚本从镜像的 `dev.ascend.target` 标签识别 NPU 或仿真环境。没有该标签的兼容镜像，可用 `--target npu` 或 `--target simulation` 指定；与已有标签冲突时报错。
 
 输出目录：
 
@@ -61,7 +61,7 @@ ascend-runtime/
 
 | 参数 | 默认值或要求 |
 | --- | --- |
-| `--image-ref-file FILE` | 必填，构建报告中的单行镜像引用 |
+| `--image IMAGE` | 必填，已有本地运行镜像的名称（含 tag）或 ID |
 | `--code-dir DIR` | 必填，已存在、可读写的外部代码目录 |
 | `--output-dir DIR` | 必填，生成配置、账号文件和 HOME 的目录 |
 | `--target npu\|simulation` | 默认读取镜像标签 |
@@ -101,7 +101,7 @@ networks:
 docker compose -f /data/ascend-runtime/compose.yaml down
 
 python3 prepare_runtime.py \
-  --image-ref-file /data/build/run-001/image-ref.txt \
+  --image ascend-sim:sim-cann9.1.0-950dt-torch2.10.0_cpu-npu2.10.0.post4 \
   --code-dir /data/ascend-verify \
   --output-dir /data/ascend-runtime \
   --runtime-subnet 192.168.240.0/24
@@ -118,7 +118,7 @@ docker compose -f /data/ascend-runtime/compose.yaml up -d
 
 ```bash
 python3 /path/to/ascend_dev/prepare_runtime.py \
-  --image-ref-file /data/build/run-001/image-ref.txt \
+  --image ascend-dev:npu-cann9.1.0-950dt-torch2.10.0_cpu-npu2.10.0.post4 \
   --code-dir /data/operator-project \
   --output-dir /data/ascend-runtime \
   --device /dev/davinci1 \
@@ -168,7 +168,7 @@ docker compose -f /data/ascend-runtime/compose.yaml exec ascend bash -lc \
     "$ASCEND_DEVICE_ID" "$ESL_HARDWARE_VERSION" "$ESL_SOC_VERSION" "$LD_LIBRARY_PATH"'
 ```
 
-默认前三项为 `0`、`0x1000`、匹配的型号字符串（例如 `Ascend950DT`），`LD_LIBRARY_PATH` 第一项应为实际 CAModel 库目录。`ESL_SOC_VERSION` 以构建时的 `--esl-soc-version` 为准，`ESL_HARDWARE_VERSION` 可通过 `--esl-hardware-version` 调整；修改初始化参数后需重建镜像，再使用新报告中的 `image-ref.txt` 重新生成配置并重建容器。
+默认前三项为 `0`、`0x1000`、匹配的型号字符串（例如 `Ascend950DT`），`LD_LIBRARY_PATH` 第一项应为实际 CAModel 库目录。`ESL_SOC_VERSION` 以构建时的 `--esl-soc-version` 为准，`ESL_HARDWARE_VERSION` 可通过 `--esl-hardware-version` 调整；修改初始化参数后需重建镜像，再通过 `--image` 指定新镜像，重新生成配置并重建容器。
 
 生成器要求本地 Docker context，挂载路径必须存在于本机。NFS、ACL、SELinux、rootless/userns-remap 的权限映射需按实际情况检查。[用户命名空间说明](https://docs.docker.com/engine/security/userns-remap/)
 

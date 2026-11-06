@@ -9,7 +9,7 @@ from ascender.errors import ToolError
 
 class ConfigurationTests(unittest.TestCase):
     def test_runtime_subnet_defaults_and_cli_override(self):
-        args = ["--image-ref-file", "/image-ref.txt", "--code-dir", "/code", "--output-dir", "/runtime"]
+        args = ["--image", "ascend-sim:generated", "--code-dir", "/code", "--output-dir", "/runtime"]
         self.assertEqual(runtime_options(args).network_subnet(), "192.168.240.0/24")
         custom = runtime_options([*args, "--runtime-subnet", "10.254.240.0/24"])
         self.assertEqual(custom.network_subnet(), "10.254.240.0/24")

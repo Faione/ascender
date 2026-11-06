@@ -603,7 +603,7 @@ class BuilderTests(unittest.TestCase):
         self.assertNotIn(str(self.path), (report / "manifest.txt").read_text())
 
     def test_build_rejects_runtime_arguments_before_docker(self):
-        for flag, value in (("--code-dir", "/code"), ("--runtime-dir", "/runtime"),
+        for flag, value in (("--image", "ascend-sim:generated"), ("--code-dir", "/code"), ("--runtime-dir", "/runtime"),
                             ("--runtime-subnet", "192.168.240.0/24"), ("--uid", "1234"),
                             ("--gid", "2345"), ("--user", "operator"), ("--device", "/dev/null"),
                             ("--group-add", "77"), ("--driver-root", "/driver"),
@@ -630,7 +630,7 @@ class BuilderTests(unittest.TestCase):
         (runtime / "home").mkdir(parents=True)
         (runtime / "home/cache.txt").write_text("keep")
         command = [sys.executable, str(ROOT / "prepare_runtime.py"),
-                   "--image-ref-file", str(report / "image-ref.txt"), "--code-dir", str(code),
+                   "--image", image_ref.strip(), "--code-dir", str(code),
                    "--output-dir", str(runtime), "--uid", "1234", "--gid", "2345",
                    "--runtime-subnet", "192.168.241.0/24"]
         failed = subprocess.run(command, env=dict(self.env, MOCK_CP_FAIL="1"), text=True, capture_output=True)

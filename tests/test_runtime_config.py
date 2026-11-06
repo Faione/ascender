@@ -19,8 +19,7 @@ class RuntimeConfigTests(unittest.TestCase):
         self.code = self.path / "operator code"
         self.code.mkdir()
         self.output = self.path / "runtime"
-        self.image_file = self.path / "image-ref.txt"
-        self.image_file.write_text("ascend-dev:generated\n")
+        self.image = "ascend-dev:generated"
         binary = self.path / "bin"
         binary.mkdir()
         mock = binary / "docker"
@@ -35,7 +34,7 @@ class RuntimeConfigTests(unittest.TestCase):
 
     def run_prepare(self, *args, expected=0):
         result = subprocess.run([sys.executable, str(ROOT / "prepare_runtime.py"),
-                                 "--image-ref-file", str(self.image_file), "--code-dir", str(self.code),
+                                 "--image", self.image, "--code-dir", str(self.code),
                                  "--output-dir", str(self.output), "--uid", "1234", "--gid", "2345", *args],
                                 env=self.env, text=True, capture_output=True)
         self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
@@ -135,11 +134,20 @@ class RuntimeConfigTests(unittest.TestCase):
         self.run_prepare("--target", "simulation")
 
     def test_bad_reference_or_source_does_not_generate_configuration(self):
-        self.image_file.write_text("one:image\ntwo:images\n")
-        self.run_prepare(expected=1)
-        self.image_file.write_text("ascend-dev:generated\n")
+        for image in ("", "one:image two:images", "one:image\ntwo:images", " ascend:image", "ascend:image "):
+            with self.subTest(image=image):
+                self.image = image
+                self.run_prepare(expected=1)
+        self.assertFalse(Path(self.env["MOCK_LOG"]).exists())
+        self.image = "ascend-dev:generated"
         self.run_prepare("--code-dir", str(self.path / "missing"), expected=1)
         self.assertFalse((self.output / "compose.yaml").exists())
+
+    def test_image_id_needs_no_build_report(self):
+        self.image = "sha256:" + "c" * 64
+        self.run_prepare()
+        self.assertIn("image: '" + self.image + "'", self.config())
+        self.assertFalse((self.path / "image-ref.txt").exists())
 
     def test_failed_identity_refresh_preserves_existing_runtime(self):
         self.run_prepare()

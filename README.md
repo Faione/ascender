@@ -41,7 +41,7 @@ TTK 所需插件/assets、golden、CSV 和 mock 目标配置应随上述安装�
 docker pull --platform linux/amd64 ubuntu:22.04
 ```
 
-**2. 构建 simulation 镜像。** 工具自动选择环境材料并初始化 CAModel，成功后在终端输出 `Report:` 报告目录，其中的 `image-ref.txt` 用于下一步生成运行配置：
+**2. 构建 simulation 镜像。** 工具自动选择环境材料并初始化 CAModel，成功后在终端的 `Built:` 行输出镜像名称，下一步直接使用该名称生成运行配置：
 
 ```bash
 python3 build.py \
@@ -72,11 +72,11 @@ SoC 同样先精确匹配。若没有 `950` 的 ops 包且只有 `950dt` 或 `95
 
 构建和运行 simulation 环境均无需 NPU 设备。NPU 目标的独立构建命令见[构建](#构建)。
 
-**3. 为已有镜像生成 Compose。** 在目标 Docker 服务器上，以拥有 `/data/ascend-verify` 读写权限、可访问 Docker 的普通开发用户执行。把下面的 `build/run-001` 替换为上一步 `Report:` 输出的实际目录；镜像须已存在于该服务器的本地 Docker 中：
+**3. 为已有镜像生成 Compose。** 在目标 Docker 服务器上，以拥有 `/data/ascend-verify` 读写权限、可访问 Docker 的普通开发用户执行。把下面的 `--image` 替换为上一步 `Built:` 输出的实际镜像名称，也可直接指定已有镜像的 ID；镜像须已存在于该服务器的本地 Docker 中：
 
 ```bash
 python3 prepare_runtime.py \
-  --image-ref-file build/run-001/image-ref.txt \
+  --image ascend-sim:sim-cann9.1.0-950dt-torch2.10.0_cpu-npu2.10.0.post4 \
   --code-dir /data/ascend-verify \
   --output-dir /data/ascend-runtime \
   --runtime-subnet 192.168.240.0/24
@@ -276,7 +276,7 @@ Python 依赖只按实际声明安装：Torch/torch-npu wheel 由 pip 解析依�
 - PIP 源写入所有用户可读的 `/etc/pip.conf`，root、developer 和后续用户默认共享；HTTP 源同时写入对应的 `trusted-host`。不持久化 `PIP_INDEX_URL`，允许按 pip 的优先级覆盖。strict 构建检查 root 和非 root 均可读取源配置。
 - `--apt-package vim --apt-package htop`、`--pip-package pytest --pip-package 'numpy<2'` 可重复。PIP 参数接受包名、extras 和版本约束，不接受直接 URL、VCS、markers 或选项；附加约束使用 `--pip-constraints`。
 - `--post-install` 指定公共安装阶段执行的 Bash 脚本，先于 CAModel 初始化；strict 下在执行后校验核心版本。
-- `build.py` 只制作镜像；`prepare_runtime.py` 独立接收 `--image-ref-file`、`--code-dir`、`--output-dir` 及账号、设备、驱动和子网参数，生成 Compose。运行配置参数不参与镜像命名和内容指纹。
+- `build.py` 只制作镜像；`prepare_runtime.py` 独立接收 `--image`、`--code-dir`、`--output-dir` 及账号、设备、驱动和子网参数，生成 Compose。运行配置参数不参与镜像命名和内容指纹。
 - `--network none` 仅禁用 RUN 网络，当前不是完整离线安装方案。`--no-cache` 不删除全局缓存。
 
 支持的环境变量为 `ASCEND_DEV_TARGET`、`ASCEND_DEV_SOC`、`ASCEND_DEV_CANN_VERSION`、`ASCEND_DEV_TORCH_VERSION`、`ASCEND_DEV_TORCH_NPU_VERSION`、`ASCEND_DEV_BASE_IMAGE`、`ASCEND_DEV_MATERIALS_ROOT`、`ASCEND_DEV_MIRROR_URL`、`ASCEND_DEV_SIMU_SOC`、`ASCEND_DEV_ESL_SOC_VERSION`、`ASCEND_DEV_ESL_HARDWARE_VERSION`（后三项仅仿真）。无 tag 配置变量。运行配置工具不依赖这些变量。
@@ -323,13 +323,13 @@ ascend-sim:sim-cann9.1.0-950-torch2.7.1-npu2.7.1
 
 ## 外部代码验证
 
-镜像制作和运行配置使用两个独立命令。先用 `build.py` 构建镜像，再在目标服务器上用 `prepare_runtime.py` 读取构建报告中的 `image-ref.txt`，生成 Compose、HOME 和账号文件。构建镜像不检查业务代码、NPU 设备或宿主机驱动；生成 NPU 运行配置时才检查这些运行资源。
+镜像制作和运行配置使用两个独立命令。先用 `build.py` 构建镜像，再在目标服务器上用 `prepare_runtime.py --image 镜像名或ID`，生成 Compose、HOME 和账号文件。构建镜像不检查业务代码、NPU 设备或宿主机驱动；生成 NPU 运行配置时才检查这些运行资源。
 
 运行配置命令示例：
 
 ```bash
 python3 prepare_runtime.py \
-  --image-ref-file /data/build/run-001/image-ref.txt \
+  --image ascend-sim:sim-cann9.1.0-950dt-torch2.10.0_cpu-npu2.10.0.post4 \
   --code-dir /data/operator-project \
   --output-dir /data/ascend-runtime
 

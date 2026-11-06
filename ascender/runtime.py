@@ -60,9 +60,9 @@ def resources(options, target):
 def prepare(options, backend=Docker.local):
     user, code = local_inputs(options)
     output = Path(options.output_dir).resolve()
-    image = Path(options.image_ref_file).read_text().strip()
+    image = options.image
     require(bool(image) and not image.startswith("-") and not any(char.isspace() for char in image),
-            "image-ref.txt must contain one image reference.")
+            "--image must be one local image name:tag or image ID without whitespace.")
     docker = backend()
     image_id = docker.image_id(image)
     label = docker.target(image_id)

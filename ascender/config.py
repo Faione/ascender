@@ -22,7 +22,7 @@ def clean_text(value: str) -> str:
 class RuntimeConfig:
     code_dir: Path | None = None
     output_dir: Path | None = None
-    image_ref_file: Path | None = None
+    image: str = ""
     target: str | None = None
     uid: str | None = None
     gid: str | None = None

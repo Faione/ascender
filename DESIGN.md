@@ -99,9 +99,9 @@ scripts 中保留各安装阶段的 install-system/install-cann/install-torch、
 
 ## 运行配置与权限
 
-`prepare_runtime.py` 从构建报告读取镜像引用，通过本地镜像标签识别目标。仿真和 NPU 的 Compose 均固定以 root（0:0）运行；另外按当前 UID/GID 和 developer 用户名准备账号记录，供显式切换身份时使用。仅支持本地 Docker，账号复制按检查得到的镜像 ID 进行。
+`prepare_runtime.py` 通过 --image 接收已有本地镜像的名称或 ID，通过本地镜像标签识别目标。仿真和 NPU 的 Compose 均固定以 root（0:0）运行；另外按当前 UID/GID 和 developer 用户名准备账号记录，供显式切换身份时使用。仅支持本地 Docker，账号复制按检查得到的镜像 ID 进行。
 
-BuildConfig 与 RuntimeConfig 分别服务两个入口。builder 不导入运行配置模块，不接收代码、账号、设备或运行子网参数；运行配置命令独立读取 image-ref.txt，检查代码、账号和运行资源，再按本地镜像的不可变 ID 复制账号文件。构建机器无需具备 NPU 设备，运行配置在目标服务器执行。运行参数不参与镜像指纹。
+BuildConfig 与 RuntimeConfig 分别服务两个入口。builder 不导入运行配置模块，不接收代码、账号、设备或运行子网参数；运行配置命令独立接收镜像名称或 ID，无需报告文件，检查代码、账号和运行资源，再按本地镜像的不可变 ID 复制账号文件。构建机器无需具备 NPU 设备，运行配置在目标服务器执行。运行参数不参与镜像指纹。
 
 `accounts` 从未启动容器复制 passwd/group，保留 root 等系统账号，仅替换指定非 root UID 记录；复用已有主组或新增 ascend-GID。冲突报错，不复制 shadow，不读写宿主机账号库。--uid/--gid/--user 仅配置该账号记录，不改变 Compose 的 root 运行身份；不在入口引入身份切换或递归 chown。
 
